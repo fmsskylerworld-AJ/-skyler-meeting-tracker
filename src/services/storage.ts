@@ -189,22 +189,23 @@ export async function fetchMeetingsAsync(): Promise<Meeting[]> {
     const { data, error } = await supabase
       .from('meetings')
       .select('*')
-      .eq('is_active', true)
       .order('s_no', { ascending: true });
 
     if (error) {
-      if (error.code === '42501') {
-        console.warn('Supabase RLS Error (42501): Select permission denied for unauthenticated or non-permitted role.');
-        return [];
-      }
-      throw error;
+      console.warn('Supabase fetch error, returning local cache:', error.message);
+      const fallback = getStoredMeetings();
+      return fallback.length > 0 ? fallback : INITIAL_MEETINGS;
     }
 
     if (!data || data.length === 0) {
-      return [];
+      const stored = getStoredMeetings();
+      return stored.length > 0 ? stored : INITIAL_MEETINGS;
     }
 
-    const mapped: Meeting[] = data.map(item => ({
+    // Filter out archived items where is_active === false (keeps true or null/undefined)
+    const activeItems = data.filter(item => item.is_active !== false);
+
+    const mapped: Meeting[] = activeItems.map(item => ({
       id: item.id,
       unit: item.unit,
       sNo: item.s_no,
@@ -222,11 +223,9 @@ export async function fetchMeetingsAsync(): Promise<Meeting[]> {
     saveMeetings(mapped); // Local cache fallback update
     return mapped;
   } catch (e: any) {
-    if (e?.code === '42501') {
-      return [];
-    }
     console.error('Failed fetching meetings from Supabase network, returning local cache:', e);
-    return getStoredMeetings();
+    const stored = getStoredMeetings();
+    return stored.length > 0 ? stored : INITIAL_MEETINGS;
   }
 }
 
@@ -261,11 +260,9 @@ export async function saveMeetingAsync(meeting: Meeting): Promise<Meeting[]> {
       });
       if (error) {
         console.error('Supabase meeting upsert error:', error.message, error);
-        throw error;
       }
     } catch (e) {
       console.error('Failed upserting meeting to Supabase:', e);
-      throw e;
     }
   }
 
@@ -282,11 +279,9 @@ export async function deleteMeetingAsync(meetingId: string): Promise<Meeting[]> 
       const { error } = await supabase.from('meetings').delete().eq('id', meetingId);
       if (error) {
         console.error('Supabase meeting delete error:', error.message, error);
-        throw error;
       }
     } catch (e) {
       console.error('Failed deleting meeting from Supabase:', e);
-      throw e;
     }
   }
 
@@ -305,14 +300,11 @@ export async function fetchLogsAsync(): Promise<MeetingCompletionLog[]> {
       .order('completed_at', { ascending: false });
 
     if (error) {
-      if (error.code === '42501') {
-        console.warn('Supabase RLS Error (42501): Logs select permission denied.');
-        return [];
-      }
-      throw error;
+      console.warn('Supabase logs fetch warning:', error.message);
+      return getStoredLogs();
     }
 
-    if (!data) return [];
+    if (!data) return getStoredLogs();
 
     const mapped: MeetingCompletionLog[] = await Promise.all(
       data.map(async item => {
@@ -343,7 +335,6 @@ export async function fetchLogsAsync(): Promise<MeetingCompletionLog[]> {
 
     return mapped;
   } catch (e: any) {
-    if (e?.code === '42501') return [];
     console.error('Failed fetching logs from Supabase, returning local logs:', e);
     return getStoredLogs();
   }

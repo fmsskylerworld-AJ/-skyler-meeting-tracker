@@ -139,6 +139,7 @@ export function App() {
     async function initAuth() {
       if (!isSupabaseConfigured || !supabase) {
         setIsAuthChecking(false);
+        setIsLoading(false);
         return;
       }
 
@@ -220,6 +221,7 @@ export function App() {
     setUserProfile(null);
     setMeetings([]);
     setLogs([]);
+    setIsLoading(false);
   };
 
   // Real-time alarm scheduler tick
@@ -335,7 +337,7 @@ export function App() {
   }
 
   // 2. Unauthenticated State -> Render ONLY Login Page
-  if (isSupabaseConfigured && !session) {
+  if (!session) {
     return (
       <LoginModal
         onSuccess={() => {

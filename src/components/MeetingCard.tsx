@@ -1,17 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Meeting, MeetingCompletionLog } from '../types/meeting';
 import { getNextScheduledDate, formatDateDisplay } from '../utils/frequencyEngine';
-import { Clock, User, Users, Camera, CheckCircle2, BellRing, Calendar, Edit3, Image as ImageIcon } from 'lucide-react';
+import { Clock, User, Users, Camera, CheckCircle2, BellRing, Calendar, Edit3, Image as ImageIcon, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 
 interface MeetingCardProps {
   meeting: Meeting;
   selectedDate: Date;
   isScheduled: boolean;
   completionLog?: MeetingCompletionLog;
+  isAdmin?: boolean;
   onOpenUpload: (meeting: Meeting) => void;
   onTriggerAlarm: (meeting: Meeting) => void;
   onViewPhotos: (log: MeetingCompletionLog) => void;
   onEditMeeting: (meeting: Meeting) => void;
+  onDeleteMeeting?: (meetingId: string) => Promise<void>;
 }
 
 export const MeetingCard: React.FC<MeetingCardProps> = ({
@@ -19,15 +21,36 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
   selectedDate,
   isScheduled,
   completionLog,
+  isAdmin = false,
   onOpenUpload,
   onTriggerAlarm,
   onViewPhotos,
   onEditMeeting,
+  onDeleteMeeting,
 }) => {
+  const [showConfirmDelete, setShowConfirmDelete] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const isSunday = selectedDate.getDay() === 0;
   const isCompleted = !!completionLog;
 
   const nextDate = !isScheduled ? getNextScheduledDate(meeting, new Date(selectedDate.getTime() + 86400000)) : null;
+
+  const handleConfirmDelete = async () => {
+    if (!onDeleteMeeting) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDeleteMeeting(meeting.id);
+      setShowConfirmDelete(false);
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      setDeleteError(err.message || 'Failed to delete meeting. Ensure you have Admin privileges.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Unit Badge Colors
   const getUnitTheme = (unit: string) => {
@@ -241,6 +264,17 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
           <Edit3 className="w-3.5 h-3.5" />
         </button>
 
+        {/* Admin Delete Button */}
+        {isAdmin && onDeleteMeeting && (
+          <button
+            onClick={() => setShowConfirmDelete(true)}
+            className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs transition"
+            title="Delete this meeting (Admin Only)"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+
         {/* Primary Action Button */}
         {isCompleted ? (
           <button
@@ -265,6 +299,59 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
           </button>
         )}
       </div>
+
+      {/* Delete Confirmation Modal Dialog */}
+      {showConfirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white border border-slate-100 rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-base font-extrabold text-slate-900">
+              Delete Meeting Schedule?
+            </h3>
+            <p className="text-xs text-slate-500 mt-1.5">
+              Are you sure you want to delete <strong className="text-slate-800">{meeting.meetingName}</strong> ({meeting.unit})? This action will remove the schedule from Supabase.
+            </p>
+
+            {deleteError && (
+              <div className="mt-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="mt-5 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowConfirmDelete(false)}
+                disabled={isDeleting}
+                className="w-full py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-md shadow-rose-600/20 transition flex items-center justify-center gap-1.5 disabled:opacity-60"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Volume2, VolumeX, Calendar, Clock, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { Bell, Volume2, VolumeX, Calendar, Sparkles, Image as ImageIcon, LogOut, FileSpreadsheet, Users } from 'lucide-react';
 import { playTestAlarmSound } from '../utils/soundEngine';
 import { formatDateDisplay } from '../utils/frequencyEngine';
+import { supabase } from '../services/supabaseClient';
 
 interface NavbarProps {
   selectedDate: Date;
@@ -10,7 +11,12 @@ interface NavbarProps {
   setAlarmSoundEnabled: (enabled: boolean) => void;
   onOpenHistory: () => void;
   onOpenAddMeeting: () => void;
+  onOpenExportExcel: () => void;
+  onOpenManageUsers?: () => void;
   totalLogsCount: number;
+  userEmail?: string;
+  isAdmin?: boolean;
+  onSignOut?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -20,7 +26,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   setAlarmSoundEnabled,
   onOpenHistory,
   onOpenAddMeeting,
+  onOpenExportExcel,
+  onOpenManageUsers,
   totalLogsCount,
+  userEmail,
+  isAdmin = false,
+  onSignOut,
 }) => {
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [notificationPermission, setNotificationPermission] = useState<string>(
@@ -43,6 +54,15 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const handleTestSound = () => {
     playTestAlarmSound();
+  };
+
+  const handleSignOut = async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    if (onSignOut) {
+      onSignOut();
+    }
   };
 
   return (
@@ -74,14 +94,34 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </div>
 
-            {/* Mobile History Logs Button */}
-            <button
-              onClick={onOpenHistory}
-              className="md:hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-bold text-blue-900 hover:bg-blue-100 transition"
-            >
-              <ImageIcon className="w-4 h-4 text-blue-700" />
-              Logs ({totalLogsCount})
-            </button>
+            {/* Mobile History Logs & Actions */}
+            <div className="md:hidden flex items-center gap-1.5">
+              {isAdmin && onOpenManageUsers && (
+                <button
+                  onClick={onOpenManageUsers}
+                  className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 hover:bg-amber-100 transition"
+                  title="Manage User Requests"
+                >
+                  <Users className="w-4 h-4 text-amber-700" />
+                </button>
+              )}
+
+              <button
+                onClick={onOpenExportExcel}
+                className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 transition"
+                title="Export Excel Report"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+              </button>
+
+              <button
+                onClick={onOpenHistory}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-bold text-blue-900 hover:bg-blue-100 transition"
+              >
+                <ImageIcon className="w-4 h-4 text-blue-700" />
+                Logs ({totalLogsCount})
+              </button>
+            </div>
           </div>
 
           {/* Live Corporate Clock & Date Badge */}
@@ -100,6 +140,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Controls & Actions */}
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* Admin User Management Button */}
+            {isAdmin && onOpenManageUsers && (
+              <button
+                onClick={onOpenManageUsers}
+                className="hidden md:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-bold shadow-sm transition active:scale-95"
+                title="Admin: Manage user access requests"
+              >
+                <Users className="w-4 h-4 text-amber-700" />
+                <span>Manage Users</span>
+              </button>
+            )}
+
             {/* Sound Alarm Toggle */}
             <button
               onClick={() => setAlarmSoundEnabled(!alarmSoundEnabled)}
@@ -122,6 +174,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Bell className="w-4 h-4 text-amber-600 animate-bounce" />
               <span className="hidden sm:inline">Test Alarm</span>
+            </button>
+
+            {/* Export Excel Report Button */}
+            <button
+              onClick={onOpenExportExcel}
+              className="hidden md:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-bold shadow-sm transition active:scale-95"
+              title="Export formatted Excel report with meeting proofs"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+              <span>Export Excel</span>
             </button>
 
             {/* Desktop Notification Request */}
@@ -153,6 +215,17 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Sparkles className="w-4 h-4" />
               <span className="hidden sm:inline">+ Add Meeting</span>
             </button>
+
+            {/* Subtle Sign-Out Button */}
+            {userEmail && (
+              <button
+                onClick={handleSignOut}
+                title={`Signed in as ${userEmail}. Click to Sign Out`}
+                className="p-2 rounded-xl bg-slate-100 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 text-slate-600 hover:text-rose-600 transition flex items-center gap-1 text-xs font-semibold"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
         </div>

@@ -23,7 +23,7 @@ export interface MeetingCompletionLog {
   department: string;
   completedDate: string; // YYYY-MM-DD
   completedAt: string; // ISO timestamp
-  photos: string[]; // Base64 Data URLs
+  photos: string[]; // Base64 Data URLs or storage paths
   mom: string; // Minutes of Meeting
   actualAttendees: string[];
   leadBy: string;
@@ -35,4 +35,16 @@ export interface DayScheduleStatus {
   isScheduled: boolean;
   completedLog?: MeetingCompletionLog;
   nextScheduledDate?: string;
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: 'Admin' | 'Manager' | 'Team Member' | 'User';
+  unit: UnitType | 'All' | null;
+  department?: string;
+  isActive: boolean;
+  approvalStatus: 'pending' | 'approved' | 'rejected';
+  createdAt?: string;
 }

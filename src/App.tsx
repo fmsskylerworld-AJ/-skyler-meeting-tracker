@@ -74,45 +74,61 @@ export function App() {
   const verifyUserProfile = useCallback(async (activeUser: User) => {
     if (!supabase) return;
     try {
-      const { data: profileData, error } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', activeUser.id)
         .maybeSingle();
 
-      if (error) {
-        console.warn('Profile fetch warning:', error.message);
-      }
+      const isAdmin = activeUser.email === 'fms.skylerworld@gmail.com' || profileData?.role === 'Admin';
 
       if (profileData) {
         const prof: UserProfile = {
           id: profileData.id,
-          name: profileData.name || 'User',
-          email: profileData.email,
-          role: profileData.role || 'Team Member',
-          unit: profileData.unit || null,
+          name: profileData.name || activeUser.email?.split('@')[0] || 'User',
+          email: profileData.email || activeUser.email || '',
+          role: isAdmin ? 'Admin' : (profileData.role || 'Team Member'),
+          unit: profileData.unit || (isAdmin ? 'All' : null),
           department: profileData.department || '',
-          isActive: profileData.is_active ?? false,
-          approvalStatus: profileData.approval_status || (profileData.is_active ? 'approved' : 'pending'),
+          isActive: profileData.is_active ?? isAdmin,
+          approvalStatus: isAdmin ? 'approved' : (profileData.approval_status || (profileData.is_active ? 'approved' : 'pending')),
           createdAt: profileData.created_at,
         };
         setUserProfile(prof);
         setUserRole(prof.role);
 
-        // Only load dashboard if approved or Admin
-        if (prof.role === 'Admin' || prof.approvalStatus === 'approved') {
+        if (isAdmin || prof.approvalStatus === 'approved') {
           await loadDashboardData();
         } else {
           setIsLoading(false);
         }
       } else {
-        // Fallback for primary accounts
-        setUserRole('Admin');
-        await loadDashboardData();
+        const prof: UserProfile = {
+          id: activeUser.id,
+          name: activeUser.email?.split('@')[0] || 'User',
+          email: activeUser.email || '',
+          role: isAdmin ? 'Admin' : 'Team Member',
+          unit: isAdmin ? 'All' : null,
+          isActive: isAdmin,
+          approvalStatus: isAdmin ? 'approved' : 'pending',
+        };
+        setUserProfile(prof);
+        setUserRole(prof.role);
+
+        if (isAdmin) {
+          await loadDashboardData();
+        } else {
+          setIsLoading(false);
+        }
       }
     } catch (err) {
       console.error('Error verifying user profile:', err);
-      await loadDashboardData();
+      if (activeUser.email === 'fms.skylerworld@gmail.com') {
+        setUserRole('Admin');
+        await loadDashboardData();
+      } else {
+        setIsLoading(false);
+      }
     }
   }, [loadDashboardData]);
 
@@ -123,7 +139,6 @@ export function App() {
     async function initAuth() {
       if (!isSupabaseConfigured || !supabase) {
         setIsAuthChecking(false);
-        await loadDashboardData();
         return;
       }
 
@@ -153,26 +168,29 @@ export function App() {
 
     initAuth();
 
-    // Subscribe to auth state changes
     let authListener: { unsubscribe: () => void } | null = null;
     if (isSupabaseConfigured && supabase) {
-      const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
         if (!mounted) return;
-        setSession((prevSession) => {
-          if (prevSession?.access_token !== newSession?.access_token) {
-            const newUser = newSession?.user || null;
-            setUser(newUser);
-            if (newUser) {
-              verifyUserProfile(newUser);
-            } else {
-              setUserProfile(null);
-              setMeetings([]);
-              setLogs([]);
-            }
-            return newSession;
+
+        if (event === 'SIGNED_OUT' || !newSession) {
+          setSession(null);
+          setUser(null);
+          setUserProfile(null);
+          setMeetings([]);
+          setLogs([]);
+          setIsLoading(false);
+          return;
+        }
+
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          setSession(newSession);
+          const newUser = newSession.user;
+          setUser(newUser);
+          if (newUser) {
+            verifyUserProfile(newUser);
           }
-          return prevSession;
-        });
+        }
       });
       authListener = listener.subscription;
     }
@@ -193,9 +211,9 @@ export function App() {
     saveAlarmSettings({ ...getAlarmSettings(), soundEnabled: enabled });
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     if (supabase) {
-      supabase.auth.signOut();
+      await supabase.auth.signOut();
     }
     setSession(null);
     setUser(null);
@@ -303,11 +321,11 @@ export function App() {
     });
   }, [evaluatedMeetings, selectedUnit, statusFilter, searchQuery]);
 
-  // Show Loading Spinner while inspecting initial authentication session
+  // 1. Show Loading Spinner while inspecting initial authentication session
   if (isAuthChecking) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white border border-slate-200 rounded-3xl p-10 text-center shadow-sm max-w-sm w-full flex flex-col items-center">
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white border border-slate-200 rounded-3xl p-10 text-center shadow-xl max-w-sm w-full flex flex-col items-center">
           <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-3" />
           <h2 className="text-base font-extrabold text-slate-800">Verifying Security Session...</h2>
           <p className="text-xs text-slate-500 mt-1">Connecting to Skyler World Auth Portal</p>
@@ -316,12 +334,84 @@ export function App() {
     );
   }
 
-  // Check Approval Status
-  const isUnauthenticated = isSupabaseConfigured && !session;
+  // 2. Unauthenticated State -> Render ONLY Login Page
+  if (isSupabaseConfigured && !session) {
+    return (
+      <LoginModal
+        onSuccess={() => {
+          supabase?.auth.getSession().then(({ data }) => {
+            if (data.session?.user) {
+              setSession(data.session);
+              setUser(data.session.user);
+              verifyUserProfile(data.session.user);
+            }
+          });
+        }}
+      />
+    );
+  }
+
+  // 3. Pending Approval State -> Render ONLY Pending Screen
   const isPendingApproval = session && userProfile && userProfile.role !== 'Admin' && userProfile.approvalStatus === 'pending';
+  if (isPendingApproval) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 selection:bg-blue-200 selection:text-blue-900">
+        <div className="bg-white border border-amber-200 rounded-3xl p-8 text-center shadow-xl max-w-md w-full">
+          <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-4 border border-amber-300">
+            <Clock className="w-7 h-7 animate-pulse" />
+          </div>
+          <h2 className="text-lg font-extrabold text-slate-900">
+            Account Awaiting Admin Approval
+          </h2>
+          <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+            Your registration request for <strong className="text-slate-800">{user?.email}</strong> has been submitted. An Administrator must review and approve your account before you can access the Meeting Tracker.
+          </p>
+          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center">
+            <button
+              onClick={handleSignOut}
+              className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Rejected State -> Render ONLY Rejected Screen
   const isRejected = session && userProfile && userProfile.role !== 'Admin' && userProfile.approvalStatus === 'rejected';
+  if (isRejected) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 selection:bg-blue-200 selection:text-blue-900">
+        <div className="bg-white border border-rose-200 rounded-3xl p-8 text-center shadow-xl max-w-md w-full">
+          <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center mx-auto mb-4 border border-rose-300">
+            <XCircle className="w-7 h-7" />
+          </div>
+          <h2 className="text-lg font-extrabold text-slate-900">
+            Account Not Approved
+          </h2>
+          <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+            Your account (<strong className="text-slate-800">{user?.email}</strong>) has not been approved for Meeting Tracker access. Please contact your Administrator.
+          </p>
+          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center">
+            <button
+              onClick={handleSignOut}
+              className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isAdminUser = userRole === 'Admin';
 
+  // 5. Authenticated & Approved State -> Render Dashboard
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-200 selection:text-blue-900">
       {/* Top Navbar with Skyler World Logo */}
@@ -343,137 +433,79 @@ export function App() {
         onSignOut={handleSignOut}
       />
 
-      {/* Login Modal Prompt if Unauthenticated */}
-      {isUnauthenticated && <LoginModal onSuccess={() => user && verifyUserProfile(user)} />}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Date Navigator */}
+        <DateNavigator selectedDate={selectedDate} setSelectedDate={setSelectedDate} />
 
-      {/* Pending Approval Screen */}
-      {isPendingApproval && (
-        <div className="max-w-md mx-auto my-16 px-4">
-          <div className="bg-white border border-amber-200 rounded-3xl p-8 text-center shadow-xl">
-            <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-4 border border-amber-300">
-              <Clock className="w-7 h-7 animate-pulse" />
-            </div>
-            <h2 className="text-lg font-extrabold text-slate-900">
-              Account Awaiting Admin Approval
-            </h2>
-            <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-              Your registration request for <strong className="text-slate-800">{user?.email}</strong> has been submitted. An Administrator must review and approve your account before you can access the Meeting Tracker.
-            </p>
-            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center">
-              <button
-                onClick={handleSignOut}
-                className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center gap-2"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign Out</span>
-              </button>
-            </div>
-          </div>
+        {/* Overview Stats Banner */}
+        <StatsBanner
+          totalMeetingsCount={meetings.length}
+          scheduledTodayCount={scheduledTodayCount}
+          completedTodayCount={completedTodayCount}
+          totalPhotosUploaded={totalPhotosUploaded}
+          selectedDate={selectedDate}
+        />
+
+        {/* Unit Filter Tabs & Search */}
+        <UnitFilter
+          selectedUnit={selectedUnit}
+          setSelectedUnit={setSelectedUnit}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          unitCounts={unitCounts}
+        />
+
+        {/* Grid Section Header */}
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+            Meeting Schedule Matrix ({filteredList.length})
+          </h2>
+          <span className="text-xs font-semibold text-slate-500">
+            Click "Upload Photo & Log" to record meeting proof
+          </span>
         </div>
-      )}
 
-      {/* Rejected Screen */}
-      {isRejected && (
-        <div className="max-w-md mx-auto my-16 px-4">
-          <div className="bg-white border border-rose-200 rounded-3xl p-8 text-center shadow-xl">
-            <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center mx-auto mb-4 border border-rose-300">
-              <XCircle className="w-7 h-7" />
-            </div>
-            <h2 className="text-lg font-extrabold text-slate-900">
-              Account Not Approved
-            </h2>
-            <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-              Your account (<strong className="text-slate-800">{user?.email}</strong>) has not been approved for Meeting Tracker access. Please contact your Administrator.
+        {/* Loading Spinner State */}
+        {isLoading ? (
+          <div className="bg-white border border-slate-200 rounded-3xl p-16 text-center my-8 shadow-sm flex flex-col items-center justify-center">
+            <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-3" />
+            <p className="text-sm font-bold text-slate-800">Syncing Skyler World Schedule Matrix...</p>
+            <p className="text-xs text-slate-500 mt-1">Retrieving active meetings from Supabase</p>
+          </div>
+        ) : filteredList.length === 0 ? (
+          <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center my-8 shadow-sm">
+            <Calendar className="w-12 h-12 text-slate-400 mx-auto mb-3" />
+            <h3 className="text-lg font-bold text-slate-800">No meetings match your filter</h3>
+            <p className="text-xs text-slate-500 font-medium mt-1">
+              Try selecting a different unit tab, date, or clearing search query.
             </p>
-            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center">
-              <button
-                onClick={handleSignOut}
-                className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center gap-2"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign Out</span>
-              </button>
-            </div>
           </div>
-        </div>
-      )}
-
-      {/* Main Dashboard (Visible only when session is valid & approved) */}
-      {!isUnauthenticated && !isPendingApproval && !isRejected && (
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          {/* Date Navigator */}
-          <DateNavigator selectedDate={selectedDate} setSelectedDate={setSelectedDate} />
-
-          {/* Overview Stats Banner */}
-          <StatsBanner
-            totalMeetingsCount={meetings.length}
-            scheduledTodayCount={scheduledTodayCount}
-            completedTodayCount={completedTodayCount}
-            totalPhotosUploaded={totalPhotosUploaded}
-            selectedDate={selectedDate}
-          />
-
-          {/* Unit Filter Tabs & Search */}
-          <UnitFilter
-            selectedUnit={selectedUnit}
-            setSelectedUnit={setSelectedUnit}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            statusFilter={statusFilter}
-            setStatusFilter={setStatusFilter}
-            unitCounts={unitCounts}
-          />
-
-          {/* Grid Section Header */}
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
-              Meeting Schedule Matrix ({filteredList.length})
-            </h2>
-            <span className="text-xs font-semibold text-slate-500">
-              Click "Upload Photo & Log" to record meeting proof
-            </span>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filteredList.map(({ meeting, isScheduled, completionLog }) => (
+              <MeetingCard
+                key={meeting.id}
+                meeting={meeting}
+                selectedDate={selectedDate}
+                isScheduled={isScheduled}
+                completionLog={completionLog}
+                isAdmin={isAdminUser}
+                onOpenUpload={(m) => setUploadModalMeeting(m)}
+                onTriggerAlarm={(m) => setActiveAlarmMeeting(m)}
+                onViewPhotos={() => setIsHistoryOpen(true)}
+                onEditMeeting={(m) => {
+                  setEditingMeeting(m);
+                  setIsAddModalOpen(true);
+                }}
+                onDeleteMeeting={handleDeleteMeeting}
+              />
+            ))}
           </div>
-
-          {/* Loading Spinner State */}
-          {isLoading ? (
-            <div className="bg-white border border-slate-200 rounded-3xl p-16 text-center my-8 shadow-sm flex flex-col items-center justify-center">
-              <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-3" />
-              <p className="text-sm font-bold text-slate-800">Syncing Skyler World Schedule Matrix...</p>
-              <p className="text-xs text-slate-500 mt-1">Retrieving active meetings from Supabase</p>
-            </div>
-          ) : filteredList.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center my-8 shadow-sm">
-              <Calendar className="w-12 h-12 text-slate-400 mx-auto mb-3" />
-              <h3 className="text-lg font-bold text-slate-800">No meetings match your filter</h3>
-              <p className="text-xs text-slate-500 font-medium mt-1">
-                Try selecting a different unit tab, date, or clearing search query.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filteredList.map(({ meeting, isScheduled, completionLog }) => (
-                <MeetingCard
-                  key={meeting.id}
-                  meeting={meeting}
-                  selectedDate={selectedDate}
-                  isScheduled={isScheduled}
-                  completionLog={completionLog}
-                  isAdmin={isAdminUser}
-                  onOpenUpload={(m) => setUploadModalMeeting(m)}
-                  onTriggerAlarm={(m) => setActiveAlarmMeeting(m)}
-                  onViewPhotos={() => setIsHistoryOpen(true)}
-                  onEditMeeting={(m) => {
-                    setEditingMeeting(m);
-                    setIsAddModalOpen(true);
-                  }}
-                  onDeleteMeeting={handleDeleteMeeting}
-                />
-              ))}
-            </div>
-          )}
-        </main>
-      )}
+        )}
+      </main>
 
       {/* Alarm Modal */}
       {activeAlarmMeeting && (

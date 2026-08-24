@@ -193,13 +193,12 @@ export async function fetchMeetingsAsync(): Promise<Meeting[]> {
 
     if (error) {
       console.warn('Supabase fetch error, returning local cache:', error.message);
-      const fallback = getStoredMeetings();
-      return fallback.length > 0 ? fallback : INITIAL_MEETINGS;
+      return getStoredMeetings();
     }
 
     if (!data || data.length === 0) {
-      const stored = getStoredMeetings();
-      return stored.length > 0 ? stored : INITIAL_MEETINGS;
+      // Return 0 meetings directly if database query returns 0 rows (no silent substitution)
+      return [];
     }
 
     // Filter out archived items where is_active === false (keeps true or null/undefined)
@@ -220,12 +219,11 @@ export async function fetchMeetingsAsync(): Promise<Meeting[]> {
       notes: item.notes || ''
     }));
 
-    saveMeetings(mapped); // Local cache fallback update
+    saveMeetings(mapped); // Update local cache
     return mapped;
   } catch (e: any) {
     console.error('Failed fetching meetings from Supabase network, returning local cache:', e);
-    const stored = getStoredMeetings();
-    return stored.length > 0 ? stored : INITIAL_MEETINGS;
+    return getStoredMeetings();
   }
 }
 

@@ -80,7 +80,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 selection:bg-blue-200 selection:text-blue-900 animate-fadeIn">
       <div className="bg-white border border-slate-100 rounded-3xl shadow-2xl max-w-md w-full overflow-hidden">
         
         {/* Header with Skyler World Branding */}

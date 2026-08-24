@@ -1,16 +1,21 @@
 import { Meeting, MeetingCompletionLog } from '../types/meeting';
 import { INITIAL_MEETINGS } from '../data/initialMeetings';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
 
 const MEETINGS_STORAGE_KEY = 'meeting_tracker_meetings_v2';
 const LOGS_STORAGE_KEY = 'meeting_tracker_logs_v2';
 const ALARM_SETTINGS_KEY = 'meeting_tracker_alarm_settings';
+const MIGRATED_KEY = 'meeting_tracker_supabase_migrated_v1';
 
 export interface AlarmSettings {
   soundEnabled: boolean;
   browserNotifications: boolean;
-  advanceMinutes: number; // e.g. 0 = on time, 5 = 5 mins before
+  advanceMinutes: number;
 }
 
+// ----------------------------------------------------
+// 1. LOCAL STORAGE FALLBACK HELPERS (PRESERVED)
+// ----------------------------------------------------
 export function getStoredMeetings(): Meeting[] {
   try {
     const raw = localStorage.getItem(MEETINGS_STORAGE_KEY);
@@ -18,7 +23,6 @@ export function getStoredMeetings(): Meeting[] {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_MEETINGS;
   } catch (e) {
-    console.error('Failed to load meetings from storage:', e);
     return INITIAL_MEETINGS;
   }
 }
@@ -27,7 +31,7 @@ export function saveMeetings(meetings: Meeting[]): void {
   try {
     localStorage.setItem(MEETINGS_STORAGE_KEY, JSON.stringify(meetings));
   } catch (e) {
-    console.error('Failed to save meetings:', e);
+    console.error('Failed to save meetings to localStorage:', e);
   }
 }
 
@@ -38,7 +42,6 @@ export function getStoredLogs(): MeetingCompletionLog[] {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
-    console.error('Failed to load logs:', e);
     return [];
   }
 }
@@ -70,7 +73,7 @@ export function deleteLog(logId: string): MeetingCompletionLog[] {
   try {
     localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(updated));
   } catch (e) {
-    console.error('Failed to delete log:', e);
+    console.error('Failed to delete log from localStorage:', e);
   }
   return updated;
 }
@@ -93,8 +96,321 @@ export function saveAlarmSettings(settings: AlarmSettings): void {
   }
 }
 
+// ----------------------------------------------------
+// 2. SUPABASE STORAGE BUCKET PHOTO UPLOADER
+// ----------------------------------------------------
+export async function uploadPhotoToSupabase(imageInput: File | string): Promise<string> {
+  if (!isSupabaseConfigured || !supabase) {
+    // Fallback: If Base64 string or file, compress locally
+    if (typeof imageInput === 'string') return imageInput;
+    return await compressImageFile(imageInput);
+  }
+
+  try {
+    let fileBlob: Blob;
+    let fileExt = 'jpg';
+
+    if (typeof imageInput === 'string') {
+      // Base64 Data URL conversion
+      const res = await fetch(imageInput);
+      fileBlob = await res.blob();
+    } else {
+      fileBlob = imageInput;
+      fileExt = imageInput.name.split('.').pop() || 'jpg';
+    }
+
+    const filename = `proofs/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('meeting-proofs')
+      .upload(filename, fileBlob, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: fileBlob.type || 'image/jpeg'
+      });
+
+    if (uploadError) {
+      console.error('Supabase image upload failed, returning fallback:', uploadError);
+      if (typeof imageInput === 'string') return imageInput;
+      return await compressImageFile(imageInput as File);
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from('meeting-proofs')
+      .getPublicUrl(filename);
+
+    return publicUrlData.publicUrl;
+  } catch (err) {
+    console.error('Failed uploading photo to Supabase storage:', err);
+    if (typeof imageInput === 'string') return imageInput;
+    return await compressImageFile(imageInput as File);
+  }
+}
+
+// ----------------------------------------------------
+// 3. ASYNC SUPABASE DATA MANAGEMENT (PRIMARY)
+// ----------------------------------------------------
+export async function fetchMeetingsAsync(): Promise<Meeting[]> {
+  if (!isSupabaseConfigured || !supabase) {
+    return getStoredMeetings();
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('meetings')
+      .select('*')
+      .order('s_no', { ascending: true });
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      // First time initialization into Supabase
+      await seedInitialMeetingsToSupabase();
+      return INITIAL_MEETINGS;
+    }
+
+    const mapped: Meeting[] = data.map(item => ({
+      id: item.id,
+      unit: item.unit,
+      sNo: item.s_no,
+      department: item.department,
+      meetingName: item.meeting_name,
+      frequency: item.frequency,
+      reportingDay: item.reporting_day,
+      leadBy: item.lead_by || '',
+      attendees: item.attendees || [],
+      scheduledTime: item.scheduled_time || '10:00',
+      alarmEnabled: item.alarm_enabled ?? true,
+      notes: item.notes || ''
+    }));
+
+    saveMeetings(mapped); // Local cache sync
+    return mapped;
+  } catch (e) {
+    console.error('Failed fetching meetings from Supabase, returning local cache:', e);
+    return getStoredMeetings();
+  }
+}
+
+export async function saveMeetingAsync(meeting: Meeting): Promise<Meeting[]> {
+  const localList = getStoredMeetings();
+  const idx = localList.findIndex(m => m.id === meeting.id);
+  let updatedList: Meeting[];
+  if (idx >= 0) {
+    updatedList = [...localList];
+    updatedList[idx] = meeting;
+  } else {
+    updatedList = [meeting, ...localList];
+  }
+  saveMeetings(updatedList);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('meetings').upsert({
+        id: meeting.id,
+        unit: meeting.unit,
+        s_no: meeting.sNo,
+        department: meeting.department,
+        meeting_name: meeting.meetingName,
+        frequency: meeting.frequency,
+        reporting_day: meeting.reportingDay,
+        lead_by: meeting.leadBy,
+        attendees: meeting.attendees,
+        scheduled_time: meeting.scheduledTime,
+        alarm_enabled: meeting.alarmEnabled,
+        notes: meeting.notes
+      });
+    } catch (e) {
+      console.error('Failed upserting meeting to Supabase:', e);
+    }
+  }
+
+  return updatedList;
+}
+
+export async function fetchLogsAsync(): Promise<MeetingCompletionLog[]> {
+  if (!isSupabaseConfigured || !supabase) {
+    return getStoredLogs();
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('meeting_logs')
+      .select('*')
+      .order('completed_at', { ascending: false });
+
+    if (error) throw error;
+
+    if (!data) return getStoredLogs();
+
+    const mapped: MeetingCompletionLog[] = data.map(item => ({
+      id: item.id,
+      meetingId: item.meeting_id,
+      meetingName: item.meeting_name,
+      unit: item.unit,
+      department: item.department,
+      completedDate: item.completed_date,
+      completedAt: item.completed_at,
+      photos: item.photos || [],
+      mom: item.mom || '',
+      actualAttendees: item.actual_attendees || [],
+      leadBy: item.lead_by || ''
+    }));
+
+    try {
+      localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(mapped));
+    } catch (err) {}
+
+    return mapped;
+  } catch (e) {
+    console.error('Failed fetching logs from Supabase, returning local logs:', e);
+    return getStoredLogs();
+  }
+}
+
+export async function saveLogAsync(log: MeetingCompletionLog): Promise<MeetingCompletionLog[]> {
+  const localLogs = saveLog(log);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      // Upload any raw Base64 photos to Supabase Storage bucket
+      const processedPhotos: string[] = [];
+      for (const photo of log.photos) {
+        if (photo.startsWith('data:image')) {
+          const cloudUrl = await uploadPhotoToSupabase(photo);
+          processedPhotos.push(cloudUrl);
+        } else {
+          processedPhotos.push(photo);
+        }
+      }
+
+      const dbLog = {
+        id: log.id,
+        meeting_id: log.meetingId,
+        meeting_name: log.meetingName,
+        unit: log.unit,
+        department: log.department,
+        completed_date: log.completedDate,
+        completed_at: log.completedAt,
+        photos: processedPhotos,
+        mom: log.mom,
+        actual_attendees: log.actualAttendees,
+        lead_by: log.leadBy
+      };
+
+      const { error } = await supabase.from('meeting_logs').upsert(dbLog);
+      if (error) console.error('Supabase log upsert error:', error);
+    } catch (e) {
+      console.error('Failed saving log to Supabase:', e);
+    }
+  }
+
+  return localLogs;
+}
+
+export async function deleteLogAsync(logId: string): Promise<MeetingCompletionLog[]> {
+  const localLogs = deleteLog(logId);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('meeting_logs').delete().eq('id', logId);
+    } catch (e) {
+      console.error('Failed deleting log from Supabase:', e);
+    }
+  }
+
+  return localLogs;
+}
+
+// ----------------------------------------------------
+// 4. SEED & ONE-TIME LOCALSTORAGE MIGRATION MECHANISM
+// ----------------------------------------------------
+export async function seedInitialMeetingsToSupabase(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  try {
+    const payload = INITIAL_MEETINGS.map(m => ({
+      id: m.id,
+      unit: m.unit,
+      s_no: m.sNo,
+      department: m.department,
+      meeting_name: m.meetingName,
+      frequency: m.frequency,
+      reporting_day: m.reportingDay,
+      lead_by: m.leadBy,
+      attendees: m.attendees,
+      scheduled_time: m.scheduledTime,
+      alarm_enabled: m.alarmEnabled,
+      notes: m.notes
+    }));
+
+    await supabase.from('meetings').upsert(payload);
+  } catch (e) {
+    console.error('Error seeding initial meetings to Supabase:', e);
+  }
+}
+
+export async function migrateLocalStorageToSupabase(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  if (localStorage.getItem(MIGRATED_KEY) === 'true') return;
+
+  try {
+    // 1. Migrate Meetings
+    const localMeetings = getStoredMeetings();
+    if (localMeetings.length > 0) {
+      const dbMeetings = localMeetings.map(m => ({
+        id: m.id,
+        unit: m.unit,
+        s_no: m.sNo,
+        department: m.department,
+        meeting_name: m.meetingName,
+        frequency: m.frequency,
+        reporting_day: m.reportingDay,
+        lead_by: m.leadBy,
+        attendees: m.attendees,
+        scheduled_time: m.scheduledTime,
+        alarm_enabled: m.alarmEnabled,
+        notes: m.notes
+      }));
+      await supabase.from('meetings').upsert(dbMeetings);
+    }
+
+    // 2. Migrate Logs & Photos
+    const localLogs = getStoredLogs();
+    for (const log of localLogs) {
+      const cloudPhotos: string[] = [];
+      for (const photo of log.photos) {
+        if (photo.startsWith('data:image')) {
+          const url = await uploadPhotoToSupabase(photo);
+          cloudPhotos.push(url);
+        } else {
+          cloudPhotos.push(photo);
+        }
+      }
+
+      await supabase.from('meeting_logs').upsert({
+        id: log.id,
+        meeting_id: log.meetingId,
+        meeting_name: log.meetingName,
+        unit: log.unit,
+        department: log.department,
+        completed_date: log.completedDate,
+        completed_at: log.completedAt,
+        photos: cloudPhotos,
+        mom: log.mom,
+        actual_attendees: log.actualAttendees,
+        lead_by: log.leadBy
+      });
+    }
+
+    localStorage.setItem(MIGRATED_KEY, 'true');
+    console.log('Successfully migrated local storage data to Supabase!');
+  } catch (err) {
+    console.error('Error performing one-time migration to Supabase:', err);
+  }
+}
+
 /**
- * Utility to compress uploaded image files to lightweight base64 Data URLs
+ * Utility to compress image file locally before upload
  */
 export function compressImageFile(file: File, maxWidth = 900, quality = 0.82): Promise<string> {
   return new Promise((resolve, reject) => {

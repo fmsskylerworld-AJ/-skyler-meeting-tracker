@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Meeting, MeetingCompletionLog, UnitType } from './types/meeting';
-import { getStoredMeetings, saveMeetings, getStoredLogs, getAlarmSettings, saveAlarmSettings } from './services/storage';
+import {
+  fetchMeetingsAsync,
+  saveMeetingAsync,
+  fetchLogsAsync,
+  getAlarmSettings,
+  saveAlarmSettings,
+  migrateLocalStorageToSupabase
+} from './services/storage';
 import { isMeetingScheduledOnDate, formatDateKey } from './utils/frequencyEngine';
 import { Navbar } from './components/Navbar';
 import { StatsBanner } from './components/StatsBanner';
@@ -11,7 +18,7 @@ import { AlarmModal } from './components/AlarmModal';
 import { UploadPhotoModal } from './components/UploadPhotoModal';
 import { MeetingHistoryModal } from './components/MeetingHistoryModal';
 import { AddMeetingModal } from './components/AddMeetingModal';
-import { Calendar } from 'lucide-react';
+import { Calendar, Loader2 } from 'lucide-react';
 
 export function App() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -21,6 +28,7 @@ export function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'scheduled' | 'completed'>('all');
   const [alarmSoundEnabled, setAlarmSoundEnabled] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Modals state
   const [activeAlarmMeeting, setActiveAlarmMeeting] = useState<Meeting | null>(null);
@@ -29,18 +37,34 @@ export function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null);
 
+  // Load state from Supabase / localStorage on mount
   useEffect(() => {
-    const loadedMeetings = getStoredMeetings();
-    const loadedLogs = getStoredLogs();
-    const settings = getAlarmSettings();
+    async function loadData() {
+      setIsLoading(true);
+      try {
+        // Run one-time migration if needed
+        await migrateLocalStorageToSupabase();
 
-    setMeetings(loadedMeetings);
-    setLogs(loadedLogs);
-    setAlarmSoundEnabled(settings.soundEnabled);
+        const fetchedMeetings = await fetchMeetingsAsync();
+        const fetchedLogs = await fetchLogsAsync();
+        const settings = getAlarmSettings();
+
+        setMeetings(fetchedMeetings);
+        setLogs(fetchedLogs);
+        setAlarmSoundEnabled(settings.soundEnabled);
+      } catch (err) {
+        console.error('Error loading data on app mount:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadData();
   }, []);
 
-  const refreshLogs = () => {
-    setLogs(getStoredLogs());
+  const refreshLogs = async () => {
+    const updated = await fetchLogsAsync();
+    setLogs(updated);
   };
 
   const handleToggleSound = (enabled: boolean) => {
@@ -81,17 +105,9 @@ export function App() {
     return () => clearInterval(interval);
   }, [meetings, logs, selectedDate, activeAlarmMeeting]);
 
-  const handleSaveMeeting = (updated: Meeting) => {
-    let newMeetings: Meeting[];
-    const idx = meetings.findIndex((m) => m.id === updated.id);
-    if (idx >= 0) {
-      newMeetings = [...meetings];
-      newMeetings[idx] = updated;
-    } else {
-      newMeetings = [updated, ...meetings];
-    }
-    setMeetings(newMeetings);
-    saveMeetings(newMeetings);
+  const handleSaveMeeting = async (updated: Meeting) => {
+    const newList = await saveMeetingAsync(updated);
+    setMeetings(newList);
   };
 
   const dateKey = formatDateKey(selectedDate);
@@ -201,8 +217,14 @@ export function App() {
           </span>
         </div>
 
-        {/* Meetings Grid */}
-        {filteredList.length === 0 ? (
+        {/* Loading Spinner State */}
+        {isLoading ? (
+          <div className="bg-white border border-slate-200 rounded-3xl p-16 text-center my-8 shadow-sm flex flex-col items-center justify-center">
+            <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-3" />
+            <p className="text-sm font-bold text-slate-800">Connecting to Skyler World Database...</p>
+            <p className="text-xs text-slate-500 mt-1">Syncing schedule matrix & proof logs</p>
+          </div>
+        ) : filteredList.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center my-8 shadow-sm">
             <Calendar className="w-12 h-12 text-slate-400 mx-auto mb-3" />
             <h3 className="text-lg font-bold text-slate-800">No meetings match your filter</h3>

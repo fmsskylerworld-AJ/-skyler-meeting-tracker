@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Meeting, MeetingCompletionLog } from '../types/meeting';
 import { formatDateKey, formatDateDisplay } from '../utils/frequencyEngine';
-import { compressImageFile, saveLog } from '../services/storage';
+import { compressImageFile, saveLogAsync } from '../services/storage';
 import { playCompletionVictorySound } from '../utils/soundEngine';
 import confetti from 'canvas-confetti';
 import { Camera, X, Upload, CheckCircle2, UserCheck, FileText, Trash2, Sparkles, AlertCircle } from 'lucide-react';
@@ -62,11 +62,13 @@ export const UploadPhotoModal: React.FC<UploadPhotoModalProps> = ({
     );
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (photos.length === 0) {
       setErrorMsg('Please upload at least 1 photo proof of the meeting.');
       return;
     }
+
+    setIsUploading(true);
 
     const dateKey = formatDateKey(selectedDate);
     const newLog: MeetingCompletionLog = {
@@ -83,7 +85,7 @@ export const UploadPhotoModal: React.FC<UploadPhotoModalProps> = ({
       leadBy: meeting.leadBy,
     };
 
-    saveLog(newLog);
+    await saveLogAsync(newLog);
 
     playCompletionVictorySound();
     confetti({
@@ -92,6 +94,7 @@ export const UploadPhotoModal: React.FC<UploadPhotoModalProps> = ({
       origin: { y: 0.6 },
     });
 
+    setIsUploading(false);
     onSuccess();
     onClose();
   };

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MeetingCompletionLog } from '../types/meeting';
 import { X, Search, Calendar, Camera, User, Users, Trash2, Maximize2 } from 'lucide-react';
-import { deleteLog } from '../services/storage';
+import { deleteLogAsync } from '../services/storage';
 
 interface MeetingHistoryModalProps {
   logs: MeetingCompletionLog[];
@@ -25,9 +25,9 @@ export const MeetingHistoryModal: React.FC<MeetingHistoryModalProps> = ({ logs, 
     return matchesSearch && matchesUnit;
   });
 
-  const handleDelete = (logId: string) => {
+  const handleDelete = async (logId: string) => {
     if (confirm('Are you sure you want to delete this meeting proof log?')) {
-      deleteLog(logId);
+      await deleteLogAsync(logId);
       onRefresh();
     }
   };

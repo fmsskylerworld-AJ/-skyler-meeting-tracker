@@ -15,6 +15,7 @@ interface NavbarProps {
   onOpenManageUsers?: () => void;
   totalLogsCount: number;
   userEmail?: string;
+  userName?: string;
   isAdmin?: boolean;
   onSignOut?: () => void;
 }
@@ -30,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenManageUsers,
   totalLogsCount,
   userEmail,
+  userName,
   isAdmin = false,
   onSignOut,
 }) => {
@@ -65,6 +67,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
+  const displayName = userName || (userEmail ? userEmail.split('@')[0] : '');
+
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-sky-100 text-slate-800 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
@@ -79,8 +83,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className="h-11 object-contain rounded-lg border border-slate-100 shadow-sm shrink-0"
               />
               <div>
-                <h1 className="font-extrabold text-xl tracking-tight text-blue-900 whitespace-nowrap">
-                  Skyler World
+                <h1 className="font-extrabold text-xl tracking-tight text-blue-900 whitespace-nowrap flex items-center gap-2">
+                  <span>Skyler World</span>
+                  {displayName && (
+                    <span className="text-slate-400 font-normal">|</span>
+                  )}
+                  {displayName && (
+                    <span className="text-blue-700 font-bold">{displayName}</span>
+                  )}
                 </h1>
                 <p className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-0.5 whitespace-nowrap">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>

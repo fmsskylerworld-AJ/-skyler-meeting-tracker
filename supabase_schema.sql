@@ -42,19 +42,7 @@ CREATE TABLE IF NOT EXISTS public.meeting_logs (
 ALTER TABLE public.meetings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.meeting_logs ENABLE ROW LEVEL SECURITY;
 
--- 4. Helper Functions for RBAC & Approval Checks (Case-Insensitive)
-CREATE OR REPLACE FUNCTION public.is_approved_user(user_id UUID)
-RETURNS BOOLEAN AS $$
-BEGIN
-    RETURN EXISTS (
-        SELECT 1 FROM public.profiles
-        WHERE id = user_id
-          AND (is_active = true OR is_active IS NULL)
-          AND (LOWER(approval_status) = 'approved' OR role = 'Admin')
-    );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
-
+-- 4. Helper Functions for RBAC & Approval Checks
 CREATE OR REPLACE FUNCTION public.is_admin(user_id UUID)
 RETURNS BOOLEAN AS $$
 BEGIN
@@ -73,22 +61,18 @@ DROP POLICY IF EXISTS "Allow public read access to meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow public insert/update/delete access to meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow approved users to view all meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow approved users to view meetings" ON public.meetings;
+DROP POLICY IF EXISTS "Allow authenticated users to view meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow Admins only to insert meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow Admins only to update meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow Admins only to delete meetings" ON public.meetings;
 
-CREATE POLICY "Allow approved users to view all meetings"
+-- READ: All authenticated users (Admins & Team Members) can view all meetings across all 4 units
+CREATE POLICY "Allow authenticated users to view meetings"
     ON public.meetings FOR SELECT
     TO authenticated
-    USING (
-      public.is_approved_user(auth.uid()) OR
-      EXISTS (
-        SELECT 1 FROM public.profiles
-        WHERE id = auth.uid()
-          AND (LOWER(approval_status) = 'approved' OR role = 'Admin')
-      )
-    );
+    USING (true);
 
+-- WRITE (INSERT, UPDATE, DELETE): Strictly restricted to Admins
 CREATE POLICY "Allow Admins only to insert meetings"
     ON public.meetings FOR INSERT
     TO authenticated
@@ -109,22 +93,18 @@ CREATE POLICY "Allow Admins only to delete meetings"
 DROP POLICY IF EXISTS "Allow public read access to meeting_logs" ON public.meeting_logs;
 DROP POLICY IF EXISTS "Allow public insert/update/delete access to meeting_logs" ON public.meeting_logs;
 DROP POLICY IF EXISTS "Allow approved users to view meeting_logs" ON public.meeting_logs;
+DROP POLICY IF EXISTS "Allow authenticated users to view meeting_logs" ON public.meeting_logs;
 DROP POLICY IF EXISTS "Allow Admins only to insert meeting_logs" ON public.meeting_logs;
 DROP POLICY IF EXISTS "Allow Admins only to update meeting_logs" ON public.meeting_logs;
 DROP POLICY IF EXISTS "Allow Admins only to delete meeting_logs" ON public.meeting_logs;
 
-CREATE POLICY "Allow approved users to view meeting_logs"
+-- READ: All authenticated users can view completion logs
+CREATE POLICY "Allow authenticated users to view meeting_logs"
     ON public.meeting_logs FOR SELECT
     TO authenticated
-    USING (
-      public.is_approved_user(auth.uid()) OR
-      EXISTS (
-        SELECT 1 FROM public.profiles
-        WHERE id = auth.uid()
-          AND (LOWER(approval_status) = 'approved' OR role = 'Admin')
-      )
-    );
+    USING (true);
 
+-- WRITE (INSERT, UPDATE, DELETE): Strictly restricted to Admins
 CREATE POLICY "Allow Admins only to insert meeting_logs"
     ON public.meeting_logs FOR INSERT
     TO authenticated
@@ -150,15 +130,18 @@ DROP POLICY IF EXISTS "Allow public select on meeting-proofs bucket" ON storage.
 DROP POLICY IF EXISTS "Allow public insert/upload on meeting-proofs bucket" ON storage.objects;
 DROP POLICY IF EXISTS "Allow public delete on meeting-proofs bucket" ON storage.objects;
 DROP POLICY IF EXISTS "Allow approved users select on meeting-proofs bucket" ON storage.objects;
+DROP POLICY IF EXISTS "Allow authenticated users select on meeting-proofs bucket" ON storage.objects;
 DROP POLICY IF EXISTS "Allow Admins upload on meeting-proofs bucket" ON storage.objects;
 DROP POLICY IF EXISTS "Allow Admins update on meeting-proofs bucket" ON storage.objects;
 DROP POLICY IF EXISTS "Allow Admins delete on meeting-proofs bucket" ON storage.objects;
 
-CREATE POLICY "Allow approved users select on meeting-proofs bucket"
+-- READ: Authenticated users can resolve/download proof photos
+CREATE POLICY "Allow authenticated users select on meeting-proofs bucket"
     ON storage.objects FOR SELECT
     TO authenticated
     USING (bucket_id = 'meeting-proofs');
 
+-- WRITE / DELETE: Admins only can upload, replace, or delete proof photos
 CREATE POLICY "Allow Admins upload on meeting-proofs bucket"
     ON storage.objects FOR INSERT
     TO authenticated

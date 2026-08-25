@@ -430,6 +430,7 @@ export function App() {
         onOpenManageUsers={() => setIsManageUsersOpen(true)}
         totalLogsCount={logs.length}
         userEmail={user?.email}
+        userName={userProfile?.name}
         isAdmin={isAdminUser}
         onSignOut={handleSignOut}
       />

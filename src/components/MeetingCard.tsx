@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Meeting, MeetingCompletionLog } from '../types/meeting';
 import { getNextScheduledDate, formatDateDisplay } from '../utils/frequencyEngine';
-import { Clock, User, Users, Camera, CheckCircle2, BellRing, Calendar, Edit3, Image as ImageIcon, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Clock, User, Users, Camera, CheckCircle2, BellRing, Calendar, Edit3, Image as ImageIcon, Trash2, AlertTriangle, Loader2, Lock } from 'lucide-react';
 
 interface MeetingCardProps {
   meeting: Meeting;
@@ -99,104 +99,68 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
       <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${theme.accent}`} />
 
       <div>
-        {/* Card Header: Unit, Department, Status */}
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {/* Unit Badge */}
-            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${theme.badge}`}>
-              {meeting.unit}
-            </span>
-
-            {/* Department Badge */}
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-              {meeting.department}
-            </span>
-
-            {/* S.No Badge */}
-            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold text-slate-500 bg-slate-50 border border-slate-200">
-              #{meeting.sNo}
-            </span>
+        {/* Unit & Status Header */}
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${theme.badge}`}>
+            {meeting.unit}
+          </span>
+          <div className="flex items-center gap-1.5">
+            {isScheduled ? (
+              <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                Scheduled Today
+              </span>
+            ) : (
+              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                Not Scheduled
+              </span>
+            )}
           </div>
-
-          {/* Status Badge */}
-          {isCompleted ? (
-            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-900 border border-blue-200 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" /> Completed
-            </span>
-          ) : isSunday ? (
-            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-200">
-              Sunday Off
-            </span>
-          ) : isScheduled ? (
-            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1 animate-pulse">
-              <BellRing className="w-3.5 h-3.5 text-emerald-600" /> Scheduled
-            </span>
-          ) : (
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
-              Not Today
-            </span>
-          )}
         </div>
 
         {/* Meeting Name */}
-        <div className="flex items-baseline justify-between gap-2">
-          <h3 className="text-lg font-extrabold text-slate-900 group-hover:text-blue-700 transition">
-            {meeting.meetingName}
-          </h3>
-          
-          {/* Scheduled Time Badge */}
-          <div className="flex items-center gap-1 text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100 text-xs font-mono font-bold shrink-0">
-            <Clock className="w-3.5 h-3.5 text-blue-600" />
-            <span>{meeting.scheduledTime}</span>
-          </div>
-        </div>
+        <h3 className="font-extrabold text-base text-slate-900 leading-snug tracking-tight mb-2 group-hover:text-blue-700 transition-colors">
+          {meeting.meetingName}
+        </h3>
 
-        {/* Frequency & Reporting Day Box */}
-        <div className="mt-3 bg-slate-50 rounded-xl p-3 border border-slate-200/80 space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Frequency:</span>
-            <span className="font-bold text-blue-900">{meeting.frequency}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Reporting Day:</span>
-            <span className="font-bold text-emerald-700">{meeting.reportingDay}</span>
-          </div>
-        </div>
-
-        {/* Lead By & Attendees List */}
-        <div className="mt-3 space-y-2 text-xs">
-          {/* Lead By */}
+        {/* Meeting Meta Info */}
+        <div className="space-y-1.5 text-xs text-slate-600 mb-4">
           <div className="flex items-center gap-2">
-            <User className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span className="text-slate-500 font-medium">Lead By:</span>
-            <span className="font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-              {meeting.leadBy || 'N/A'}
-            </span>
+            <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <span className="font-bold text-slate-800">{meeting.scheduledTime}</span>
+            <span className="text-slate-400">•</span>
+            <span className="font-medium">{meeting.frequency}</span>
+            <span className="text-slate-400">•</span>
+            <span className="font-medium text-slate-500">{meeting.reportingDay}</span>
           </div>
 
-          {/* Attendees */}
+          <div className="flex items-center gap-2">
+            <User className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <span className="text-slate-500">Lead:</span>
+            <span className="font-semibold text-slate-800">{meeting.leadBy || 'N/A'}</span>
+          </div>
+
           <div className="flex items-start gap-2">
             <Users className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
             <div className="flex-1">
-              <span className="text-slate-500 font-medium mr-1.5">Attendees:</span>
-              <div className="flex flex-wrap gap-1 mt-1">
-                {meeting.attendees.map((person, idx) => (
-                  <span
-                    key={idx}
-                    className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200"
-                  >
-                    {person}
-                  </span>
-                ))}
-              </div>
+              <span className="text-slate-500">Attendees: </span>
+              <span className="font-medium text-slate-700">
+                {meeting.attendees.length > 0 ? meeting.attendees.join(', ') : 'All Team Members'}
+              </span>
             </div>
           </div>
+
+          {meeting.notes && (
+            <p className="text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 mt-2 font-medium">
+              💡 {meeting.notes}
+            </p>
+          )}
         </div>
 
-        {/* Completion Proof Preview */}
-        {isCompleted && completionLog && (
-          <div className="mt-4 p-3 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2">
-            <div className="flex items-center justify-between text-xs">
+        {/* Completed Proof Banner */}
+        {completionLog && (
+          <div className="mt-3 p-3 rounded-xl bg-blue-50/80 border border-blue-200/80 space-y-2">
+            <div className="flex items-center justify-between">
               <span className="text-blue-900 font-bold flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" /> Logged Proof
               </span>
@@ -255,14 +219,16 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
           <span>Alarm</span>
         </button>
 
-        {/* Edit Button */}
-        <button
-          onClick={() => onEditMeeting(meeting)}
-          className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 text-xs transition"
-          title="Edit meeting details or time"
-        >
-          <Edit3 className="w-3.5 h-3.5" />
-        </button>
+        {/* Edit Button (Admin Only) */}
+        {isAdmin && (
+          <button
+            onClick={() => onEditMeeting(meeting)}
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 text-xs transition"
+            title="Edit meeting details or time (Admin Only)"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+          </button>
+        )}
 
         {/* Admin Delete Button */}
         {isAdmin && onDeleteMeeting && (
@@ -284,7 +250,7 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
             <ImageIcon className="w-3.5 h-3.5 text-blue-700" />
             <span>View Proof</span>
           </button>
-        ) : (
+        ) : isAdmin ? (
           <button
             onClick={() => onOpenUpload(meeting)}
             disabled={isSunday}
@@ -297,6 +263,11 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
             <Camera className="w-3.5 h-3.5" />
             <span>Upload Photo & Log</span>
           </button>
+        ) : (
+          <div className="flex-1 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-slate-500 text-[11px] font-semibold flex items-center justify-center gap-1">
+            <Lock className="w-3 h-3 text-slate-400" />
+            <span>Pending Admin Log</span>
+          </div>
         )}
       </div>
 

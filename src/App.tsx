@@ -80,7 +80,9 @@ export function App() {
         .eq('id', activeUser.id)
         .maybeSingle();
 
-      const isAdmin = activeUser.email === 'fms.skylerworld@gmail.com' || profileData?.role === 'Admin';
+      const isAdmin = activeUser.email === 'fms.skylerworld@gmail.com' || 
+                      activeUser.email === 'ope.skylerworld@gmail.com' || 
+                      profileData?.role === 'Admin';
 
       if (profileData) {
         const prof: UserProfile = {
@@ -123,7 +125,7 @@ export function App() {
       }
     } catch (err) {
       console.error('Error verifying user profile:', err);
-      if (activeUser.email === 'fms.skylerworld@gmail.com') {
+      if (activeUser.email === 'fms.skylerworld@gmail.com' || activeUser.email === 'ope.skylerworld@gmail.com') {
         setUserRole('Admin');
         await loadDashboardData();
       } else {
@@ -466,7 +468,7 @@ export function App() {
             Meeting Schedule Matrix ({filteredList.length})
           </h2>
           <span className="text-xs font-semibold text-slate-500">
-            Click "Upload Photo & Log" to record meeting proof
+            {isAdminUser ? 'Click "Upload Photo & Log" to record meeting proof' : 'Read-Only Employee Dashboard'}
           </span>
         </div>
 

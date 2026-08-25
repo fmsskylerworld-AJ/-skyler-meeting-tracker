@@ -76,19 +76,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <img
                 src="/skyler-logo.jpg"
                 alt="Skyler World Logo"
-                className="h-11 object-contain rounded-lg border border-slate-100 shadow-sm"
+                className="h-11 object-contain rounded-lg border border-slate-100 shadow-sm shrink-0"
               />
               <div>
-                <div className="flex items-center gap-1.5">
-                  <h1 className="font-extrabold text-xl tracking-tight text-blue-900">
-                    Skyler World
-                  </h1>
-                  <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border border-blue-200">
-                    Corporate
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-0.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <h1 className="font-extrabold text-xl tracking-tight text-blue-900 whitespace-nowrap">
+                  Skyler World
+                </h1>
+                <p className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-0.5 whitespace-nowrap">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
                   Meeting Schedule & Proof Alarm Dashboard
                 </p>
               </div>
@@ -217,14 +212,16 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>Proof Logs ({totalLogsCount})</span>
             </button>
 
-            {/* Add Custom Meeting */}
-            <button
-              onClick={onOpenAddMeeting}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-md shadow-blue-700/20 transition active:scale-95"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span className="hidden sm:inline">+ Add Meeting</span>
-            </button>
+            {/* Add Custom Meeting (Admin Only) */}
+            {isAdmin && (
+              <button
+                onClick={onOpenAddMeeting}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-md shadow-blue-700/20 transition active:scale-95"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span className="hidden sm:inline">+ Add Meeting</span>
+              </button>
+            )}
 
             {/* Clearly Visible Sign-Out Button */}
             {onSignOut && (

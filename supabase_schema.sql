@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.meetings (
     attendees TEXT[] DEFAULT '{}'::TEXT[],
     scheduled_time TEXT NOT NULL DEFAULT '10:00',
     alarm_enabled BOOLEAN NOT NULL DEFAULT true,
+    is_active BOOLEAN NOT NULL DEFAULT true,
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
@@ -29,7 +30,7 @@ CREATE TABLE IF NOT EXISTS public.meeting_logs (
     department TEXT NOT NULL,
     completed_date TEXT NOT NULL, -- YYYY-MM-DD
     completed_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    photos TEXT[] DEFAULT '{}'::TEXT[], -- Public URLs from Supabase Storage
+    photos TEXT[] DEFAULT '{}'::TEXT[],
     mom TEXT,
     actual_attendees TEXT[] DEFAULT '{}'::TEXT[],
     lead_by TEXT,
@@ -37,41 +38,128 @@ CREATE TABLE IF NOT EXISTS public.meeting_logs (
     CONSTRAINT unique_meeting_date UNIQUE (meeting_id, completed_date)
 );
 
--- 3. Enable Row Level Security (RLS) for Future Auth Integration
+-- 3. Enable Row Level Security (RLS)
 ALTER TABLE public.meetings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.meeting_logs ENABLE ROW LEVEL SECURITY;
 
--- 4. Create RLS Policies (Allow Read / Write for Anon Key)
-CREATE POLICY "Allow public read access to meetings" 
-    ON public.meetings FOR SELECT USING (true);
+-- 4. Helper Functions for RBAC & Approval Checks
+CREATE OR REPLACE FUNCTION public.is_approved_user(user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = user_id
+          AND is_active = true
+          AND approval_status = 'approved'
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
-CREATE POLICY "Allow public insert/update/delete access to meetings" 
-    ON public.meetings FOR ALL USING (true);
+CREATE OR REPLACE FUNCTION public.is_admin(user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = user_id
+          AND role = 'Admin'
+          AND is_active = true
+          AND approval_status = 'approved'
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
-CREATE POLICY "Allow public read access to meeting_logs" 
-    ON public.meeting_logs FOR SELECT USING (true);
+-- 5. RLS Policies for public.meetings
+DROP POLICY IF EXISTS "Allow public read access to meetings" ON public.meetings;
+DROP POLICY IF EXISTS "Allow public insert/update/delete access to meetings" ON public.meetings;
+DROP POLICY IF EXISTS "Allow approved users to view all meetings" ON public.meetings;
+DROP POLICY IF EXISTS "Allow Admins only to insert meetings" ON public.meetings;
+DROP POLICY IF EXISTS "Allow Admins only to update meetings" ON public.meetings;
+DROP POLICY IF EXISTS "Allow Admins only to delete meetings" ON public.meetings;
 
-CREATE POLICY "Allow public insert/update/delete access to meeting_logs" 
-    ON public.meeting_logs FOR ALL USING (true);
+CREATE POLICY "Allow approved users to view all meetings"
+    ON public.meetings FOR SELECT
+    TO authenticated
+    USING (public.is_approved_user(auth.uid()));
 
--- 5. Create Storage Bucket for Meeting Proof Photos
+CREATE POLICY "Allow Admins only to insert meetings"
+    ON public.meetings FOR INSERT
+    TO authenticated
+    WITH CHECK (public.is_admin(auth.uid()));
+
+CREATE POLICY "Allow Admins only to update meetings"
+    ON public.meetings FOR UPDATE
+    TO authenticated
+    USING (public.is_admin(auth.uid()))
+    WITH CHECK (public.is_admin(auth.uid()));
+
+CREATE POLICY "Allow Admins only to delete meetings"
+    ON public.meetings FOR DELETE
+    TO authenticated
+    USING (public.is_admin(auth.uid()));
+
+-- 6. RLS Policies for public.meeting_logs
+DROP POLICY IF EXISTS "Allow public read access to meeting_logs" ON public.meeting_logs;
+DROP POLICY IF EXISTS "Allow public insert/update/delete access to meeting_logs" ON public.meeting_logs;
+DROP POLICY IF EXISTS "Allow approved users to view meeting_logs" ON public.meeting_logs;
+DROP POLICY IF EXISTS "Allow Admins only to insert meeting_logs" ON public.meeting_logs;
+DROP POLICY IF EXISTS "Allow Admins only to update meeting_logs" ON public.meeting_logs;
+DROP POLICY IF EXISTS "Allow Admins only to delete meeting_logs" ON public.meeting_logs;
+
+CREATE POLICY "Allow approved users to view meeting_logs"
+    ON public.meeting_logs FOR SELECT
+    TO authenticated
+    USING (public.is_approved_user(auth.uid()));
+
+CREATE POLICY "Allow Admins only to insert meeting_logs"
+    ON public.meeting_logs FOR INSERT
+    TO authenticated
+    WITH CHECK (public.is_admin(auth.uid()));
+
+CREATE POLICY "Allow Admins only to update meeting_logs"
+    ON public.meeting_logs FOR UPDATE
+    TO authenticated
+    USING (public.is_admin(auth.uid()))
+    WITH CHECK (public.is_admin(auth.uid()));
+
+CREATE POLICY "Allow Admins only to delete meeting_logs"
+    ON public.meeting_logs FOR DELETE
+    TO authenticated
+    USING (public.is_admin(auth.uid()));
+
+-- 7. Storage Bucket Security Policies for meeting-proofs
 INSERT INTO storage.buckets (id, name, public) 
-VALUES ('meeting-proofs', 'meeting-proofs', true)
-ON CONFLICT (id) DO NOTHING;
+VALUES ('meeting-proofs', 'meeting-proofs', false)
+ON CONFLICT (id) DO UPDATE SET public = false;
 
--- 6. Storage Bucket Security Policies
-CREATE POLICY "Allow public select on meeting-proofs bucket" 
-    ON storage.objects FOR SELECT 
-    USING (bucket_id = 'meeting-proofs');
+DROP POLICY IF EXISTS "Allow public select on meeting-proofs bucket" ON storage.objects;
+DROP POLICY IF EXISTS "Allow public insert/upload on meeting-proofs bucket" ON storage.objects;
+DROP POLICY IF EXISTS "Allow public delete on meeting-proofs bucket" ON storage.objects;
+DROP POLICY IF EXISTS "Allow approved users select on meeting-proofs bucket" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Admins upload on meeting-proofs bucket" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Admins update on meeting-proofs bucket" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Admins delete on meeting-proofs bucket" ON storage.objects;
 
-CREATE POLICY "Allow public insert/upload on meeting-proofs bucket" 
-    ON storage.objects FOR INSERT 
-    WITH CHECK (bucket_id = 'meeting-proofs');
+CREATE POLICY "Allow approved users select on meeting-proofs bucket"
+    ON storage.objects FOR SELECT
+    TO authenticated
+    USING (bucket_id = 'meeting-proofs' AND public.is_approved_user(auth.uid()));
 
-CREATE POLICY "Allow public delete on meeting-proofs bucket" 
-    ON storage.objects FOR DELETE 
-    USING (bucket_id = 'meeting-proofs');
+CREATE POLICY "Allow Admins upload on meeting-proofs bucket"
+    ON storage.objects FOR INSERT
+    TO authenticated
+    WITH CHECK (bucket_id = 'meeting-proofs' AND public.is_admin(auth.uid()));
 
--- Indexes for lightning fast queries
+CREATE POLICY "Allow Admins update on meeting-proofs bucket"
+    ON storage.objects FOR UPDATE
+    TO authenticated
+    USING (bucket_id = 'meeting-proofs' AND public.is_admin(auth.uid()))
+    WITH CHECK (bucket_id = 'meeting-proofs' AND public.is_admin(auth.uid()));
+
+CREATE POLICY "Allow Admins delete on meeting-proofs bucket"
+    ON storage.objects FOR DELETE
+    TO authenticated
+    USING (bucket_id = 'meeting-proofs' AND public.is_admin(auth.uid()));
+
+-- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_meetings_unit ON public.meetings(unit);
 CREATE INDEX IF NOT EXISTS idx_meeting_logs_meeting_date ON public.meeting_logs(meeting_id, completed_date);

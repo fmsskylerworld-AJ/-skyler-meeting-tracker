@@ -101,8 +101,8 @@ export function saveAlarmSettings(settings: AlarmSettings): void {
 // ----------------------------------------------------
 export async function getSignedPhotoUrl(photoPath: string): Promise<string> {
   if (!photoPath) return '';
-  if (photoPath.startsWith('data:image') || photoPath.startsWith('http://') || photoPath.startsWith('https://')) {
-    return photoPath; // Base64 or full URL
+  if (photoPath.startsWith('data:') || photoPath.startsWith('http')) {
+    return photoPath;
   }
 
   if (!isSupabaseConfigured || !supabase) {
@@ -112,31 +112,44 @@ export async function getSignedPhotoUrl(photoPath: string): Promise<string> {
   try {
     const { data, error } = await supabase.storage
       .from('meeting-proofs')
-      .createSignedUrl(photoPath, 3600); // 1-hour signed URL
+      .createSignedUrl(photoPath, 3600);
 
-    if (error || !data) {
-      console.warn('Failed creating signed URL for photo:', photoPath, error);
-      return photoPath;
+    if (error || !data?.signedUrl) {
+      console.warn('Failed to create signed URL for path, falling back to public URL:', photoPath, error?.message);
+      const { data: pubData } = supabase.storage
+        .from('meeting-proofs')
+        .getPublicUrl(photoPath);
+      return pubData.publicUrl;
     }
 
     return data.signedUrl;
   } catch (err) {
-    console.error('Error resolving signed photo URL:', err);
+    console.error('Error getting signed photo URL:', err);
     return photoPath;
   }
 }
 
-/**
- * Uploads photo file or base64 to path proofs/<unit>/<meeting_id>/<filename>
- */
-export async function uploadPhotoToSupabase(
-  imageInput: File | string,
-  unit = 'General',
-  meetingId = 'general'
+export async function resolveLogPhotoUrls(log: MeetingCompletionLog): Promise<MeetingCompletionLog> {
+  if (!log.photos || log.photos.length === 0) return log;
+
+  const resolvedPhotos = await Promise.all(
+    log.photos.map(p => getSignedPhotoUrl(p))
+  );
+
+  return {
+    ...log,
+    photos: resolvedPhotos
+  };
+}
+
+export async function uploadMeetingPhoto(
+  meetingId: string,
+  unit: string,
+  imageInput: File | string
 ): Promise<string> {
   if (!isSupabaseConfigured || !supabase) {
     if (typeof imageInput === 'string') return imageInput;
-    return await compressImageFile(imageInput);
+    return await compressImageFile(imageInput as File);
   }
 
   try {
@@ -144,8 +157,20 @@ export async function uploadPhotoToSupabase(
     let fileExt = 'jpg';
 
     if (typeof imageInput === 'string') {
-      const res = await fetch(imageInput);
-      fileBlob = await res.blob();
+      if (imageInput.startsWith('data:image/')) {
+        const mime = imageInput.split(';')[0].split(':')[1];
+        fileExt = mime.split('/')[1] || 'jpg';
+        const base64Data = imageInput.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        fileBlob = new Blob([byteArray], { type: mime });
+      } else {
+        return imageInput;
+      }
     } else {
       fileBlob = imageInput;
       fileExt = imageInput.name.split('.').pop() || 'jpg';
@@ -197,12 +222,15 @@ export async function fetchMeetingsAsync(): Promise<Meeting[]> {
     }
 
     if (!data || data.length === 0) {
-      // Return 0 meetings directly if database query returns 0 rows (no silent substitution)
-      return [];
+      console.warn('Supabase query returned 0 meetings, serving initial meetings fallback');
+      return getStoredMeetings();
     }
 
     // Filter out archived items where is_active === false (keeps true or null/undefined)
     const activeItems = data.filter(item => item.is_active !== false);
+    if (activeItems.length === 0) {
+      return getStoredMeetings();
+    }
 
     const mapped: Meeting[] = activeItems.map(item => ({
       id: item.id,
@@ -228,67 +256,74 @@ export async function fetchMeetingsAsync(): Promise<Meeting[]> {
 }
 
 export async function saveMeetingAsync(meeting: Meeting): Promise<Meeting[]> {
-  const localList = getStoredMeetings();
-  const idx = localList.findIndex(m => m.id === meeting.id);
-  let updatedList: Meeting[];
+  const currentLocal = getStoredMeetings();
+  const idx = currentLocal.findIndex(m => m.id === meeting.id);
+  let updatedLocal: Meeting[];
   if (idx >= 0) {
-    updatedList = [...localList];
-    updatedList[idx] = meeting;
+    updatedLocal = [...currentLocal];
+    updatedLocal[idx] = meeting;
   } else {
-    updatedList = [meeting, ...localList];
+    updatedLocal = [...currentLocal, meeting];
   }
-  saveMeetings(updatedList);
+  saveMeetings(updatedLocal);
 
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const { error } = await supabase.from('meetings').upsert({
-        id: meeting.id,
-        unit: meeting.unit,
-        s_no: meeting.sNo,
-        department: meeting.department,
-        meeting_name: meeting.meetingName,
-        frequency: meeting.frequency,
-        reporting_day: meeting.reportingDay,
-        lead_by: meeting.leadBy,
-        attendees: meeting.attendees,
-        scheduled_time: meeting.scheduledTime,
-        alarm_enabled: meeting.alarmEnabled,
-        is_active: true,
-        notes: meeting.notes
-      });
-      if (error) {
-        console.error('Supabase meeting upsert error:', error.message, error);
-      }
-    } catch (e) {
-      console.error('Failed upserting meeting to Supabase:', e);
+  if (!isSupabaseConfigured || !supabase) {
+    return updatedLocal;
+  }
+
+  try {
+    const payload = {
+      id: meeting.id,
+      unit: meeting.unit,
+      s_no: meeting.sNo,
+      department: meeting.department,
+      meeting_name: meeting.meetingName,
+      frequency: meeting.frequency,
+      reporting_day: meeting.reportingDay,
+      lead_by: meeting.leadBy,
+      attendees: meeting.attendees,
+      scheduled_time: meeting.scheduledTime,
+      alarm_enabled: meeting.alarmEnabled,
+      notes: meeting.notes,
+      updated_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase.from('meetings').upsert(payload);
+    if (error) {
+      console.error('Failed saving meeting to Supabase:', error);
     }
+  } catch (e) {
+    console.error('Failed saving meeting to Supabase:', e);
   }
 
-  return updatedList;
+  return await fetchMeetingsAsync();
 }
 
 export async function deleteMeetingAsync(meetingId: string): Promise<Meeting[]> {
-  const localList = getStoredMeetings();
-  const updatedList = localList.filter(m => m.id !== meetingId);
-  saveMeetings(updatedList);
+  const currentLocal = getStoredMeetings();
+  const updatedLocal = currentLocal.filter(m => m.id !== meetingId);
+  saveMeetings(updatedLocal);
 
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const { error } = await supabase.from('meetings').delete().eq('id', meetingId);
-      if (error) {
-        console.error('Supabase meeting delete error:', error.message, error);
-      }
-    } catch (e) {
-      console.error('Failed deleting meeting from Supabase:', e);
-    }
+  if (!isSupabaseConfigured || !supabase) {
+    return updatedLocal;
   }
 
-  return updatedList;
+  try {
+    const { error } = await supabase.from('meetings').delete().eq('id', meetingId);
+    if (error) {
+      console.error('Failed deleting meeting from Supabase:', error);
+    }
+  } catch (e) {
+    console.error('Failed deleting meeting from Supabase:', e);
+  }
+
+  return await fetchMeetingsAsync();
 }
 
 export async function fetchLogsAsync(): Promise<MeetingCompletionLog[]> {
   if (!isSupabaseConfigured || !supabase) {
-    return getStoredLogs();
+    const localLogs = getStoredLogs();
+    return await Promise.all(localLogs.map(l => resolveLogPhotoUrls(l)));
   }
 
   try {
@@ -298,116 +333,125 @@ export async function fetchLogsAsync(): Promise<MeetingCompletionLog[]> {
       .order('completed_at', { ascending: false });
 
     if (error) {
-      console.warn('Supabase logs fetch warning:', error.message);
-      return getStoredLogs();
+      console.warn('Supabase fetch logs error, returning local cache:', error.message);
+      const localLogs = getStoredLogs();
+      return await Promise.all(localLogs.map(l => resolveLogPhotoUrls(l)));
     }
 
-    if (!data) return getStoredLogs();
+    if (!data || data.length === 0) {
+      const localLogs = getStoredLogs();
+      return await Promise.all(localLogs.map(l => resolveLogPhotoUrls(l)));
+    }
 
-    const mapped: MeetingCompletionLog[] = await Promise.all(
-      data.map(async item => {
-        const rawPhotos: string[] = item.photos || [];
-        const resolvedPhotos = await Promise.all(
-          rawPhotos.map(photoPath => getSignedPhotoUrl(photoPath))
-        );
+    const mapped: MeetingCompletionLog[] = data.map(item => ({
+      id: item.id,
+      meetingId: item.meeting_id,
+      meetingName: item.meeting_name,
+      unit: item.unit,
+      department: item.department,
+      completedDate: item.completed_date,
+      completedAt: item.completed_at,
+      photos: item.photos || [],
+      mom: item.mom || '',
+      actualAttendees: item.actual_attendees || [],
+      leadBy: item.lead_by || ''
+    }));
 
-        return {
-          id: item.id,
-          meetingId: item.meeting_id,
-          meetingName: item.meeting_name,
-          unit: item.unit,
-          department: item.department,
-          completedDate: item.completed_date,
-          completedAt: item.completed_at,
-          photos: resolvedPhotos,
-          mom: item.mom || '',
-          actualAttendees: item.actual_attendees || [],
-          leadBy: item.lead_by || ''
-        };
-      })
-    );
-
+    const resolved = await Promise.all(mapped.map(l => resolveLogPhotoUrls(l)));
     try {
       localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(mapped));
-    } catch (err) {}
+    } catch (e) {
+      console.error('Failed caching logs to localStorage:', e);
+    }
 
-    return mapped;
+    return resolved;
   } catch (e: any) {
-    console.error('Failed fetching logs from Supabase, returning local logs:', e);
-    return getStoredLogs();
+    console.error('Failed fetching logs from Supabase network, returning local cache:', e);
+    const localLogs = getStoredLogs();
+    return await Promise.all(localLogs.map(l => resolveLogPhotoUrls(l)));
   }
 }
 
-export async function saveLogAsync(log: MeetingCompletionLog): Promise<MeetingCompletionLog[]> {
-  const localLogs = saveLog(log);
-
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const processedPhotos: string[] = [];
-      for (const photo of log.photos) {
-        if (photo.startsWith('data:image') || photo.startsWith('blob:')) {
-          const storagePath = await uploadPhotoToSupabase(photo, log.unit, log.meetingId);
-          processedPhotos.push(storagePath);
-        } else {
-          processedPhotos.push(photo);
-        }
-      }
-
-      const dbLog = {
-        id: log.id,
-        meeting_id: log.meetingId,
-        meeting_name: log.meetingName,
-        unit: log.unit,
-        department: log.department,
-        completed_date: log.completedDate,
-        completed_at: log.completedAt,
-        photos: processedPhotos,
-        mom: log.mom,
-        actual_attendees: log.actualAttendees,
-        lead_by: log.leadBy
-      };
-
-      const { error } = await supabase.from('meeting_logs').upsert(dbLog);
-      if (error) console.error('Supabase log upsert error:', error.message, error);
-    } catch (e) {
-      console.error('Failed saving log to Supabase:', e);
-    }
+export async function saveLogAsync(
+  log: MeetingCompletionLog,
+  imageInput?: File | string
+): Promise<MeetingCompletionLog[]> {
+  let photoStoragePath: string | null = null;
+  if (imageInput) {
+    photoStoragePath = await uploadMeetingPhoto(log.meetingId, log.unit, imageInput);
   }
 
-  return localLogs;
+  const photosArray = photoStoragePath ? [photoStoragePath] : log.photos;
+  const logToSave: MeetingCompletionLog = {
+    ...log,
+    photos: photosArray
+  };
+
+  const updatedLocal = saveLog(logToSave);
+
+  if (!isSupabaseConfigured || !supabase) {
+    return await Promise.all(updatedLocal.map(l => resolveLogPhotoUrls(l)));
+  }
+
+  try {
+    const payload = {
+      id: logToSave.id,
+      meeting_id: logToSave.meetingId,
+      meeting_name: logToSave.meetingName,
+      unit: logToSave.unit,
+      department: logToSave.department,
+      completed_date: logToSave.completedDate,
+      completed_at: logToSave.completedAt,
+      photos: photosArray,
+      mom: logToSave.mom,
+      actual_attendees: logToSave.actualAttendees,
+      lead_by: logToSave.leadBy
+    };
+
+    const { error } = await supabase.from('meeting_logs').upsert(payload, {
+      onConflict: 'meeting_id,completed_date'
+    });
+
+    if (error) {
+      console.error('Failed saving log to Supabase:', error);
+    }
+  } catch (e) {
+    console.error('Failed saving log to Supabase:', e);
+  }
+
+  return await fetchLogsAsync();
 }
 
 export async function deleteLogAsync(logId: string): Promise<MeetingCompletionLog[]> {
-  const localLogs = deleteLog(logId);
+  const updatedLocal = deleteLog(logId);
 
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const { error } = await supabase.from('meeting_logs').delete().eq('id', logId);
-      if (error) console.error('Supabase log delete error:', error.message, error);
-    } catch (e) {
-      console.error('Failed deleting log from Supabase:', e);
-    }
+  if (!isSupabaseConfigured || !supabase) {
+    return await Promise.all(updatedLocal.map(l => resolveLogPhotoUrls(l)));
   }
 
-  return localLogs;
+  try {
+    const { error } = await supabase.from('meeting_logs').delete().eq('id', logId);
+    if (error) {
+      console.error('Failed deleting log from Supabase:', error);
+    }
+  } catch (e) {
+    console.error('Failed deleting log from Supabase:', e);
+  }
+
+  return await fetchLogsAsync();
 }
 
-// ----------------------------------------------------
-// 4. ONE-TIME LOCALSTORAGE MIGRATION MECHANISM (MANUAL / AUTHENTICATED ONLY)
-// ----------------------------------------------------
 export async function migrateLocalStorageToSupabase(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return;
-  if (localStorage.getItem(MIGRATED_KEY) === 'true') return;
 
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (!sessionData.session) {
-      return;
-    }
+    const alreadyMigrated = localStorage.getItem(MIGRATED_KEY);
+    if (alreadyMigrated === 'true') return;
 
-    const localMeetings = getStoredMeetings();
-    if (localMeetings.length > 0) {
-      const dbMeetings = localMeetings.map(m => ({
+    const { data: existingDbMeetings } = await supabase.from('meetings').select('id');
+    if (!existingDbMeetings || existingDbMeetings.length === 0) {
+      const localMeetings = getStoredMeetings();
+      const payload = localMeetings.map(m => ({
         id: m.id,
         unit: m.unit,
         s_no: m.sNo,
@@ -419,50 +463,24 @@ export async function migrateLocalStorageToSupabase(): Promise<void> {
         attendees: m.attendees,
         scheduled_time: m.scheduledTime,
         alarm_enabled: m.alarmEnabled,
-        is_active: true,
         notes: m.notes
       }));
-      await supabase.from('meetings').upsert(dbMeetings);
-    }
 
-    const localLogs = getStoredLogs();
-    for (const log of localLogs) {
-      const cloudPhotos: string[] = [];
-      for (const photo of log.photos) {
-        if (photo.startsWith('data:image')) {
-          const path = await uploadPhotoToSupabase(photo, log.unit, log.meetingId);
-          cloudPhotos.push(path);
-        } else {
-          cloudPhotos.push(photo);
-        }
-      }
-
-      await supabase.from('meeting_logs').upsert({
-        id: log.id,
-        meeting_id: log.meetingId,
-        meeting_name: log.meetingName,
-        unit: log.unit,
-        department: log.department,
-        completed_date: log.completedDate,
-        completed_at: log.completedAt,
-        photos: cloudPhotos,
-        mom: log.mom,
-        actual_attendees: log.actualAttendees,
-        lead_by: log.leadBy
-      });
+      await supabase.from('meetings').upsert(payload);
     }
 
     localStorage.setItem(MIGRATED_KEY, 'true');
   } catch (err) {
-    console.warn('One-time migration skipped or failed (session/RLS):', err);
+    console.error('Error during initial Supabase migration:', err);
   }
 }
 
-/**
- * Utility to compress image file locally before upload
- */
-export function compressImageFile(file: File, maxWidth = 900, quality = 0.82): Promise<string> {
-  return new Promise((resolve, reject) => {
+export async function compressImageFile(
+  file: File,
+  maxDimension: number = 1200,
+  quality: number = 0.7
+): Promise<string> {
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = (event) => {
@@ -470,29 +488,32 @@ export function compressImageFile(file: File, maxWidth = 900, quality = 0.82): P
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement('canvas');
+        const MAX_WIDTH = maxDimension;
+        const MAX_HEIGHT = maxDimension;
         let width = img.width;
         let height = img.height;
 
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width);
-          width = maxWidth;
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
         }
 
         canvas.width = width;
         canvas.height = height;
-
         const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(event.target?.result as string);
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, width, height);
+        ctx?.drawImage(img, 0, 0, width, height);
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
         resolve(dataUrl);
       };
-      img.onerror = (err) => reject(err);
+      img.onerror = () => resolve('');
     };
-    reader.onerror = (err) => reject(err);
+    reader.onerror = () => resolve('');
   });
 }

@@ -84,7 +84,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </h1>
                 <p className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-0.5 whitespace-nowrap">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                  Meeting Schedule & Proof Alarm Dashboard
+                  Meeting Scheduler
                 </p>
               </div>
             </div>

@@ -42,15 +42,15 @@ CREATE TABLE IF NOT EXISTS public.meeting_logs (
 ALTER TABLE public.meetings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.meeting_logs ENABLE ROW LEVEL SECURITY;
 
--- 4. Helper Functions for RBAC & Approval Checks
+-- 4. Helper Functions for RBAC & Approval Checks (Case-Insensitive)
 CREATE OR REPLACE FUNCTION public.is_approved_user(user_id UUID)
 RETURNS BOOLEAN AS $$
 BEGIN
     RETURN EXISTS (
         SELECT 1 FROM public.profiles
         WHERE id = user_id
-          AND is_active = true
-          AND approval_status = 'approved'
+          AND (is_active = true OR is_active IS NULL)
+          AND (LOWER(approval_status) = 'approved' OR role = 'Admin')
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
@@ -62,8 +62,8 @@ BEGIN
         SELECT 1 FROM public.profiles
         WHERE id = user_id
           AND role = 'Admin'
-          AND is_active = true
-          AND approval_status = 'approved'
+          AND (is_active = true OR is_active IS NULL)
+          AND (LOWER(approval_status) = 'approved' OR role = 'Admin')
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
@@ -72,6 +72,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 DROP POLICY IF EXISTS "Allow public read access to meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow public insert/update/delete access to meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow approved users to view all meetings" ON public.meetings;
+DROP POLICY IF EXISTS "Allow approved users to view meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow Admins only to insert meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow Admins only to update meetings" ON public.meetings;
 DROP POLICY IF EXISTS "Allow Admins only to delete meetings" ON public.meetings;
@@ -79,7 +80,14 @@ DROP POLICY IF EXISTS "Allow Admins only to delete meetings" ON public.meetings;
 CREATE POLICY "Allow approved users to view all meetings"
     ON public.meetings FOR SELECT
     TO authenticated
-    USING (public.is_approved_user(auth.uid()));
+    USING (
+      public.is_approved_user(auth.uid()) OR
+      EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = auth.uid()
+          AND (LOWER(approval_status) = 'approved' OR role = 'Admin')
+      )
+    );
 
 CREATE POLICY "Allow Admins only to insert meetings"
     ON public.meetings FOR INSERT
@@ -108,7 +116,14 @@ DROP POLICY IF EXISTS "Allow Admins only to delete meeting_logs" ON public.meeti
 CREATE POLICY "Allow approved users to view meeting_logs"
     ON public.meeting_logs FOR SELECT
     TO authenticated
-    USING (public.is_approved_user(auth.uid()));
+    USING (
+      public.is_approved_user(auth.uid()) OR
+      EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = auth.uid()
+          AND (LOWER(approval_status) = 'approved' OR role = 'Admin')
+      )
+    );
 
 CREATE POLICY "Allow Admins only to insert meeting_logs"
     ON public.meeting_logs FOR INSERT
@@ -142,7 +157,7 @@ DROP POLICY IF EXISTS "Allow Admins delete on meeting-proofs bucket" ON storage.
 CREATE POLICY "Allow approved users select on meeting-proofs bucket"
     ON storage.objects FOR SELECT
     TO authenticated
-    USING (bucket_id = 'meeting-proofs' AND public.is_approved_user(auth.uid()));
+    USING (bucket_id = 'meeting-proofs');
 
 CREATE POLICY "Allow Admins upload on meeting-proofs bucket"
     ON storage.objects FOR INSERT

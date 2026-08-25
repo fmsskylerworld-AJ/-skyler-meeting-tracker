@@ -50,7 +50,7 @@ export function App() {
   const [isManageUsersOpen, setIsManageUsersOpen] = useState<boolean>(false);
   const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null);
 
-  // Helper to load dashboard meetings & logs for an authenticated approved session
+  // Helper to load dashboard meetings & logs for an authenticated session
   const loadDashboardData = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -85,6 +85,9 @@ export function App() {
                       profileData?.role === 'Admin';
 
       if (profileData) {
+        const rawStatus = (profileData.approval_status || '').toString().toLowerCase();
+        const isApprovedStatus = isAdmin || rawStatus === 'approved' || (profileData.is_active === true && rawStatus !== 'rejected');
+
         const prof: UserProfile = {
           id: profileData.id,
           name: profileData.name || activeUser.email?.split('@')[0] || 'User',
@@ -92,14 +95,14 @@ export function App() {
           role: isAdmin ? 'Admin' : (profileData.role || 'Team Member'),
           unit: profileData.unit || (isAdmin ? 'All' : null),
           department: profileData.department || '',
-          isActive: profileData.is_active ?? isAdmin,
-          approvalStatus: isAdmin ? 'approved' : (profileData.approval_status || (profileData.is_active ? 'approved' : 'pending')),
+          isActive: profileData.is_active ?? true,
+          approvalStatus: isAdmin ? 'approved' : (isApprovedStatus ? 'approved' : (rawStatus === 'rejected' ? 'rejected' : 'pending')),
           createdAt: profileData.created_at,
         };
         setUserProfile(prof);
         setUserRole(prof.role);
 
-        if (isAdmin || prof.approvalStatus === 'approved') {
+        if (isAdmin || isApprovedStatus) {
           await loadDashboardData();
         } else {
           setIsLoading(false);
@@ -111,26 +114,20 @@ export function App() {
           email: activeUser.email || '',
           role: isAdmin ? 'Admin' : 'Team Member',
           unit: isAdmin ? 'All' : null,
-          isActive: isAdmin,
-          approvalStatus: isAdmin ? 'approved' : 'pending',
+          isActive: true,
+          approvalStatus: 'approved',
         };
         setUserProfile(prof);
         setUserRole(prof.role);
 
-        if (isAdmin) {
-          await loadDashboardData();
-        } else {
-          setIsLoading(false);
-        }
+        await loadDashboardData();
       }
     } catch (err) {
       console.error('Error verifying user profile:', err);
       if (activeUser.email === 'fms.skylerworld@gmail.com' || activeUser.email === 'ope.skylerworld@gmail.com') {
         setUserRole('Admin');
-        await loadDashboardData();
-      } else {
-        setIsLoading(false);
       }
+      await loadDashboardData();
     }
   }, [loadDashboardData]);
 

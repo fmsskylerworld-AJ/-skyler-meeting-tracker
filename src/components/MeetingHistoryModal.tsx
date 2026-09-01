@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MeetingCompletionLog } from '../types/meeting';
-import { X, Search, Calendar, Camera, User, Users, Trash2, Maximize2 } from 'lucide-react';
+import { X, Search, Calendar, Camera, User, Users, Trash2, Maximize2, RotateCcw } from 'lucide-react';
 import { deleteLogAsync } from '../services/storage';
 
 interface MeetingHistoryModalProps {
@@ -12,6 +12,7 @@ interface MeetingHistoryModalProps {
 export const MeetingHistoryModal: React.FC<MeetingHistoryModalProps> = ({ logs, onClose, onRefresh }) => {
   const [search, setSearch] = useState('');
   const [selectedUnit, setSelectedUnit] = useState<string>('All');
+  const [selectedDate, setSelectedDate] = useState<string>('');
   const [activeLightboxImage, setActiveLightboxImage] = useState<string | null>(null);
 
   const filteredLogs = logs.filter((log) => {
@@ -22,7 +23,9 @@ export const MeetingHistoryModal: React.FC<MeetingHistoryModalProps> = ({ logs, 
       log.mom.toLowerCase().includes(search.toLowerCase());
 
     const matchesUnit = selectedUnit === 'All' || log.unit === selectedUnit;
-    return matchesSearch && matchesUnit;
+    const matchesDate = !selectedDate || log.completedDate === selectedDate;
+
+    return matchesSearch && matchesUnit && matchesDate;
   });
 
   const handleDelete = async (logId: string) => {
@@ -59,7 +62,8 @@ export const MeetingHistoryModal: React.FC<MeetingHistoryModalProps> = ({ logs, 
         </div>
 
         {/* Filter Bar */}
-        <div className="py-4 flex flex-col sm:flex-row gap-3 shrink-0">
+        <div className="py-4 flex flex-col sm:flex-row gap-3 shrink-0 items-stretch sm:items-center">
+          {/* Search Box */}
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -71,17 +75,42 @@ export const MeetingHistoryModal: React.FC<MeetingHistoryModalProps> = ({ logs, 
             />
           </div>
 
-          <select
-            value={selectedUnit}
-            onChange={(e) => setSelectedUnit(e.target.value)}
-            className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="All">All Units</option>
-            <option value="Windows HO">Windows HO</option>
-            <option value="Furniture HO">Furniture HO</option>
-            <option value="Windows Factory">Windows Factory</option>
-            <option value="Kitchen Factory">Kitchen Factory</option>
-          </select>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Filter by Date */}
+            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-blue-500">
+              <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="bg-transparent text-slate-800 text-xs font-bold focus:outline-none cursor-pointer"
+                title="Filter proof photos by date"
+              />
+              {selectedDate && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate('')}
+                  className="p-0.5 text-slate-400 hover:text-rose-600 transition"
+                  title="Clear date filter"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            {/* Filter by Unit */}
+            <select
+              value={selectedUnit}
+              onChange={(e) => setSelectedUnit(e.target.value)}
+              className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="All">All Units</option>
+              <option value="Windows HO">Windows HO</option>
+              <option value="Furniture HO">Furniture HO</option>
+              <option value="Windows Factory">Windows Factory</option>
+              <option value="Kitchen Factory">Kitchen Factory</option>
+            </select>
+          </div>
         </div>
 
         {/* Log List */}
@@ -90,7 +119,9 @@ export const MeetingHistoryModal: React.FC<MeetingHistoryModalProps> = ({ logs, 
             <div className="text-center py-12 bg-slate-50 rounded-2xl border border-slate-200">
               <Camera className="w-12 h-12 text-slate-400 mx-auto mb-3" />
               <p className="text-sm font-bold text-slate-700">No completed meeting logs found.</p>
-              <p className="text-xs text-slate-500 mt-1">Upload meeting photos on today's cards to populate history.</p>
+              <p className="text-xs text-slate-500 mt-1">
+                {selectedDate ? `No logs recorded on ${selectedDate}. Try selecting another date or clearing the filter.` : "Upload meeting photos on today's cards to populate history."}
+              </p>
             </div>
           ) : (
             filteredLogs.map((log) => (

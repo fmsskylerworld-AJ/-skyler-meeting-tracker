@@ -11,6 +11,21 @@ export interface ExcelExportOptions {
   toDate: Date;
 }
 
+/**
+ * Safely truncates and cleans cell text to ensure it never exceeds Excel's 32,767 character limit per cell.
+ */
+function safeCellText(val: any, maxLen: number = 32000): string {
+  if (val === null || val === undefined) return '';
+  const str = String(val);
+  if (str.startsWith('data:image/')) {
+    return '[Base64 Embedded Image Data]';
+  }
+  if (str.length > maxLen) {
+    return str.substring(0, maxLen - 20) + '... [TRUNCATED]';
+  }
+  return str;
+}
+
 export function generateExcelReport({
   meetings,
   logs,
@@ -93,36 +108,39 @@ export function generateExcelReport({
       }
 
       const baseRow = {
-        'Meeting Date': dateKey,
-        'Meeting ID': m.id,
-        'Unit': m.unit,
+        'Meeting Date': safeCellText(dateKey),
+        'Meeting ID': safeCellText(m.id),
+        'Unit': safeCellText(m.unit),
         'S. No.': m.sNo,
-        'Department': m.department,
-        'Meeting Name': m.meetingName,
-        'Frequency': m.frequency,
-        'Reporting Day': m.reportingDay,
-        'Lead By': m.leadBy || 'N/A',
-        'Scheduled Attendees': Array.isArray(m.attendees) ? m.attendees.join(', ') : '',
-        'Scheduled Time': m.scheduledTime,
+        'Department': safeCellText(m.department),
+        'Meeting Name': safeCellText(m.meetingName),
+        'Frequency': safeCellText(m.frequency),
+        'Reporting Day': safeCellText(m.reportingDay),
+        'Lead By': safeCellText(m.leadBy || 'N/A'),
+        'Scheduled Attendees': safeCellText(Array.isArray(m.attendees) ? m.attendees.join(', ') : ''),
+        'Scheduled Time': safeCellText(m.scheduledTime),
         'Alarm Enabled': m.alarmEnabled ? 'Yes' : 'No',
         'Active Status': 'Active',
-        'Meeting Notes': m.notes || '',
+        'Meeting Notes': safeCellText(m.notes || ''),
         'Execution Status': isCompleted ? 'Completed' : 'Pending',
-        'Completed Date': completionLog?.completedDate || 'N/A',
-        'Completed Time': completionLog ? new Date(completionLog.completedAt).toLocaleTimeString('en-US') : 'N/A',
-        'Completed / Submitted By': completionLog?.leadBy || m.leadBy || 'N/A',
-        'Actual Attendees': completionLog?.actualAttendees ? completionLog.actualAttendees.join(', ') : 'N/A',
-        'MoM / Remarks': completionLog?.mom || 'N/A',
+        'Completed Date': safeCellText(completionLog?.completedDate || 'N/A'),
+        'Completed Time': safeCellText(completionLog ? new Date(completionLog.completedAt).toLocaleTimeString('en-US') : 'N/A'),
+        'Completed / Submitted By': safeCellText(completionLog?.leadBy || m.leadBy || 'N/A'),
+        'Actual Attendees': safeCellText(completionLog?.actualAttendees ? completionLog.actualAttendees.join(', ') : 'N/A'),
+        'MoM / Remarks': safeCellText(completionLog?.mom || 'N/A'),
       };
 
       if (photos.length > 0) {
         photos.forEach((photoUrl, idx) => {
-          const fileName = photoUrl.split('/').pop() || `proof_${idx + 1}.jpg`;
+          let fileName = `proof_${idx + 1}.jpg`;
+          if (photoUrl && !photoUrl.startsWith('data:image/')) {
+            fileName = photoUrl.split('/').pop() || fileName;
+          }
           rows.push({
             ...baseRow,
             'Proof Photo Index': idx + 1,
-            'Proof Photo Name': fileName,
-            'Proof Photo Storage Path / URL': photoUrl,
+            'Proof Photo Name': safeCellText(fileName),
+            'Proof Photo Storage Path / URL': safeCellText(photoUrl),
           });
         });
       } else {
